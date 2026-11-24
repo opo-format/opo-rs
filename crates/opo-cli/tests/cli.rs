@@ -177,3 +177,67 @@ fn render_plan_and_model() {
         Some(2)
     );
 }
+
+#[test]
+fn export_then_build() {
+    let spec = spec_dir();
+    let tmp = std::env::temp_dir().join(format!("opo-cli-src-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let lib = tmp.join("lib");
+    let ok = |c: &mut Command| {
+        let out = c.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    ok(opo()
+        .arg("export")
+        .arg(spec.join("library/templates/IfcWall"))
+        .args(["--base", "library/templates/IfcWall", "--library"])
+        .arg(&lib)
+        .arg("-o")
+        .arg(lib.join("templates/IfcWall")));
+    assert!(
+        lib.join("styles/materials.yaml").exists()
+            && lib
+                .join("templates/IfcWall/layers/types-examples.yaml")
+                .exists()
+    );
+    let out = tmp.join("out");
+    ok(opo()
+        .arg("build")
+        .arg(lib.join("templates/IfcWall"))
+        .arg("--library")
+        .arg(&lib)
+        .arg("-o")
+        .arg(&out)
+        .args(["--timestamp", "2026-11-24"]));
+    let built = out.join("library/templates/IfcWall");
+    assert!(
+        built.join("object.ifcx").exists() && built.join("layers/types-examples.ifcx").exists()
+    );
+    ok(opo().args(["check", "--root"]).arg(&spec).arg(&built));
+    ok(opo()
+        .arg("build")
+        .arg(lib.join("templates/IfcWall"))
+        .arg("--library")
+        .arg(&lib)
+        .arg("-o")
+        .arg(&out)
+        .arg("--package"));
+    assert!(out.join("library/templates/IfcWall.opo").exists());
+    assert_eq!(
+        opo()
+            .arg("build")
+            .arg(lib.join("templates/IfcWall"))
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2),
+        "--library is required"
+    );
+}

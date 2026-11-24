@@ -18,6 +18,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -231,6 +237,18 @@ name = "hashbrown"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "735eaa21a6a5ffb2e84362faaeb90c05ba8e19797ca30428478cb6ea3a4921bc"
+dependencies = [
+ "foldhash",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
+dependencies = [
+ "hashbrown 0.17.2",
+]
 
 [[package]]
 name = "heapless"
@@ -404,6 +422,7 @@ dependencies = [
  "opo-ifcx",
  "opo-recipe",
  "opo-render",
+ "opo-source",
  "serde_json",
 ]
 
@@ -451,6 +470,20 @@ dependencies = [
  "opo-model",
  "opo-recipe",
  "serde_json",
+]
+
+[[package]]
+name = "opo-source"
+version = "0.1.0"
+dependencies = [
+ "opo-build",
+ "opo-check",
+ "opo-feel",
+ "opo-ifcx",
+ "opo-model",
+ "opo-recipe",
+ "serde_json",
+ "yaml-rust2",
 ]
 
 [[package]]
@@ -751,6 +784,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
+]
+
+[[package]]
+name = "yaml-rust2"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a8af4469040402b7fe43c26575bab9a3069f0717c4a2931ecf4fb8728ee4cec"
+dependencies = [
+ "arraydeque",
+ "hashlink",
 ]
 
 [[package]]
