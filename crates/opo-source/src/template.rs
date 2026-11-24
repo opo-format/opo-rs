@@ -11,7 +11,8 @@ use crate::{Error, Library, read_yaml};
 /// IFC data extracted from the pinned IFC release (`library/ifc/`).
 #[derive(Debug, Clone, Default)]
 pub struct IfcData {
-    /// Class → predefined types (without USERDEFINED / NOTDEFINED).
+    /// Concrete class → predefined types (without USERDEFINED / NOTDEFINED; empty for a class
+    /// without a TypeEnum).
     pub types: HashMap<String, Vec<String>>,
     /// Class → property and quantity set templates (`{name, kind, generic, applies_to, props}`).
     pub sets: HashMap<String, Vec<Json>>,
@@ -23,13 +24,18 @@ impl IfcData {
     pub fn from_json(elements: &Json, psets: &Json) -> Self {
         let mut types = HashMap::new();
         for e in elements.as_array().into_iter().flatten() {
-            if let (Some(class), Some(t)) = (
-                e.get(1).and_then(Json::as_str),
-                e.get(3).and_then(Json::as_array),
-            ) {
+            // Concrete classes only; a class without a TypeEnum (null) has no predefined
+            // types but still gets a template (USERDEFINED / NOTDEFINED).
+            if e.get(2).and_then(Json::as_bool) == Some(true) {
+                continue;
+            }
+            if let Some(class) = e.get(1).and_then(Json::as_str) {
                 types.insert(
                     class.to_owned(),
-                    t.iter()
+                    e.get(3)
+                        .and_then(Json::as_array)
+                        .into_iter()
+                        .flatten()
                         .filter_map(|x| x.as_str().map(str::to_owned))
                         .collect(),
                 );
@@ -548,5 +554,25 @@ mod tests {
         );
         let bad = json!({"archetype": "linear", "name": "x", "description": "d", "default_type": "WATER"});
         assert!(generate("IfcBoiler", &bad, &s, &ifc, &GeneratorOptions::default()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod ifc_data_tests {
+    use super::*;
+
+    #[test]
+    fn concrete_classes_with_and_without_types() {
+        let ifc = IfcData::from_json(
+            &json!([
+                [0, "IfcFlowTerminal", false, null],
+                [0, "IfcDistributionFlowElement", true, null],
+                [1, "IfcAirTerminal", false, ["DIFFUSER", "GRILLE"]]
+            ]),
+            &json!({}),
+        );
+        assert_eq!(ifc.types["IfcFlowTerminal"], Vec::<String>::new());
+        assert_eq!(ifc.types["IfcAirTerminal"], ["DIFFUSER", "GRILLE"]);
+        assert!(!ifc.types.contains_key("IfcDistributionFlowElement"));
     }
 }
