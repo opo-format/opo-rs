@@ -131,11 +131,78 @@ impl Document {
         Self::from_json(&text, &path.display().to_string())
     }
 
-    /// Write the document as pretty-printed JSON with a final newline.
+    /// Write the document as JSON in the repository layout (see [`write_json`]).
     pub fn to_json(&self) -> String {
-        let mut s = serde_json::to_string_pretty(self).expect("documents serialise");
-        s.push('\n');
-        s
+        write_json(&serde_json::to_value(self).expect("documents serialise"))
+    }
+}
+
+/// Write JSON in the layout of the OPO repositories: two-space indent, lists of numbers and
+/// lists of number lists (points) on one line, a final newline. Keeps diffs of geometry small.
+pub fn write_json(v: &Json) -> String {
+    let mut out = String::new();
+    write_value(v, 0, &mut out);
+    out.push('\n');
+    out
+}
+
+fn is_flat_numbers(a: &[Json]) -> bool {
+    !a.is_empty() && a.iter().all(Json::is_number)
+}
+
+fn inline(v: &Json) -> Option<String> {
+    let a = v.as_array()?;
+    if is_flat_numbers(a) {
+        return Some(format!(
+            "[{}]",
+            a.iter().map(Json::to_string).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if !a.is_empty()
+        && a.iter()
+            .all(|x| x.as_array().is_some_and(|y| is_flat_numbers(y)))
+    {
+        return Some(format!(
+            "[{}]",
+            a.iter()
+                .map(|x| inline(x).expect("flat"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    None
+}
+
+fn write_value(v: &Json, depth: usize, out: &mut String) {
+    let pad = |d: usize| "  ".repeat(d);
+    if let Some(s) = inline(v) {
+        out.push_str(&s);
+        return;
+    }
+    match v {
+        Json::Array(a) if !a.is_empty() => {
+            out.push_str("[\n");
+            for (i, x) in a.iter().enumerate() {
+                out.push_str(&pad(depth + 1));
+                write_value(x, depth + 1, out);
+                out.push_str(if i + 1 < a.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&pad(depth));
+            out.push(']');
+        }
+        Json::Object(m) if !m.is_empty() => {
+            out.push_str("{\n");
+            for (i, (k, x)) in m.iter().enumerate() {
+                out.push_str(&pad(depth + 1));
+                out.push_str(&Json::String(k.clone()).to_string());
+                out.push_str(": ");
+                write_value(x, depth + 1, out);
+                out.push_str(if i + 1 < m.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&pad(depth));
+            out.push('}');
+        }
+        other => out.push_str(&other.to_string()),
     }
 }
 
@@ -492,6 +559,16 @@ mod tests {
                 layers: ("a".into(), "b".into())
             }]
         );
+    }
+
+    #[test]
+    fn json_layout() {
+        let v = json!({"a": [1, 2.5], "b": [[0, 0], [1, 2]], "c": [], "d": {}, "e": [{"x": "é"}]});
+        assert_eq!(
+            write_json(&v),
+            "{\n  \"a\": [1, 2.5],\n  \"b\": [[0, 0], [1, 2]],\n  \"c\": [],\n  \"d\": {},\n  \"e\": [\n    {\n      \"x\": \"é\"\n    }\n  ]\n}\n"
+        );
+        assert_eq!(serde_json::from_str::<Json>(&write_json(&v)).unwrap(), v);
     }
 
     #[test]
