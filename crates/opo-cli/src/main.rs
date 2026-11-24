@@ -16,6 +16,7 @@ Usage:
   opo unpack FILE [-o FOLDER]
   opo build SOURCE... --library ROOT [--base PATH] [-o OUT] [--timestamp DATE] [--package]
   opo export FOLDER --base PATH --library ROOT -o SOURCE
+  opo generate --library ROOT [-o OUT] [--timestamp DATE] [CLASS...]
   opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
 
@@ -33,6 +34,10 @@ Commands:
           to <ROOT>/build. Nested objects resolve under OUT.
   export  Convert an object folder (IFCX) into YAML sources; registry entries are
           merged into the library's references.yaml and styles/.
+  generate
+          Generate class templates from <ROOT>/templates/archetypes/*.yaml,
+          <ROOT>/templates/classes.yaml and the IFC data in <ROOT>/ifc/, then build them
+          like 'opo build' into <OUT>/library/templates/<Class> (default: every class).
   render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
           shaded 3D view (model.medium). Values and inputs are JSON objects.
 
@@ -433,6 +438,87 @@ fn export(args: &[String]) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Write a compiled object, baked, into `<out>/<base>`.
+fn write_built(
+    built: opo_source::Compiled,
+    out: &Path,
+    base: &str,
+    resolver: &DirResolver,
+) -> Result<(PathBuf, opo_build::BakeReport), String> {
+    let mut doc = built.base;
+    let r = opo_build::bake(&mut doc, resolver, base).map_err(|e| e.to_string())?;
+    let dir = out.join(base);
+    std::fs::create_dir_all(dir.join("layers")).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::write(dir.join("object.ifcx"), doc.to_json()).map_err(|e| e.to_string())?;
+    for (f, d) in &built.layers {
+        std::fs::write(dir.join("layers").join(f), d.to_json()).map_err(|e| e.to_string())?;
+    }
+    if built.layers.is_empty() {
+        let _ = std::fs::remove_dir(dir.join("layers"));
+    }
+    Ok((dir, r))
+}
+
+fn generate(args: &[String]) -> Result<bool, String> {
+    let (mut library, mut out, mut timestamp, mut only) = (
+        None::<PathBuf>,
+        None::<PathBuf>,
+        today(),
+        Vec::<String>::new(),
+    );
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
+        match arg.as_str() {
+            "--library" => library = Some(next("a folder")?.into()),
+            "-o" => out = Some(next("a folder")?.into()),
+            "--timestamp" => timestamp = next("a date")?,
+            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s => only.push(s.into()),
+        }
+    }
+    let library = library.ok_or("generate needs --library ROOT")?;
+    let out = out.unwrap_or_else(|| library.join("build"));
+    let mut lib = opo_source::Library::load(&library).map_err(|e| e.to_string())?;
+    let sources = opo_source::TemplateSources::load(&library).map_err(|e| e.to_string())?;
+    let ifc = opo_source::IfcData::load(&library.join("ifc")).map_err(|e| e.to_string())?;
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: out.clone(),
+    };
+    for c in &only {
+        if !sources.classes.contains_key(c) {
+            return Err(format!("{c} is not in templates/classes.yaml"));
+        }
+    }
+    for (class, entry) in &sources.classes {
+        if !only.is_empty() && !only.contains(class) {
+            continue;
+        }
+        let (src, layers, refs) = opo_source::generate(
+            class,
+            entry,
+            &sources,
+            &ifc,
+            &opo_source::GeneratorOptions::default(),
+        )
+        .map_err(|e| e.to_string())?;
+        lib.merge(&refs).map_err(|e| e.to_string())?;
+        let base = format!("library/templates/{class}");
+        let built = opo_source::compile(&src, &layers, &lib, &base, &resolver, &timestamp)
+            .map_err(|e| format!("{class}: {e}"))?;
+        let (dir, r) =
+            write_built(built, &out, &base, &resolver).map_err(|e| format!("{class}: {e}"))?;
+        println!(
+            "{class:<22} {} ({} meshes, {} curves)",
+            dir.display(),
+            r.meshes,
+            r.curves
+        );
+    }
+    Ok(true)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -447,6 +533,7 @@ fn main() -> ExitCode {
         Some("render") => render(&args[1..]),
         Some("build") => build(&args[1..]),
         Some("export") => export(&args[1..]),
+        Some("generate") => generate(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'")),
     };
     match result {
