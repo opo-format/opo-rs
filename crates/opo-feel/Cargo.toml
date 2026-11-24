@@ -1,0 +1,15 @@
+[package]
+name = "opo-feel"
+description = "Evaluator for the FEEL subset used by OPO formulas (spec §4.4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
