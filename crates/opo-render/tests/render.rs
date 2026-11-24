@@ -20,7 +20,7 @@ fn balanced(svg: &str) -> bool {
 
 #[test]
 fn every_template_draws() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let resolver = DirResolver {
         prefix: "opo-format.org/".into(),
         root: spec.clone(),
@@ -52,7 +52,7 @@ fn every_template_draws() {
 
 #[test]
 fn wall_plan_is_hatched_from_its_own_materials() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let def = load_type(&spec.join("library/templates/IfcWall")).unwrap();
     let mut input = Input::default();
     input
@@ -73,7 +73,7 @@ fn wall_plan_is_hatched_from_its_own_materials() {
 
 #[test]
 fn door_plan_and_model() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let resolver = DirResolver {
         prefix: "opo-format.org/".into(),
         root: spec.clone(),

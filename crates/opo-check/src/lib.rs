@@ -41,7 +41,7 @@ pub struct IfcTemplates {
 
 impl IfcTemplates {
     /// Read the extracted template table (`{class: [{name, props: [{name}]}]}`, as
-    /// `tools/ifc4x3_psets.json` of the standard repository).
+    /// the psets.json written by `opo ifc`).
     pub fn from_json(json: &Json) -> Self {
         let mut by_class = HashMap::new();
         for (class, sets) in json.as_object().into_iter().flatten() {

@@ -27,7 +27,7 @@ fn help_and_usage_errors() {
 
 #[test]
 fn check_templates() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let out = opo()
         .args(["check", "--root"])
         .arg(&spec)
@@ -46,7 +46,7 @@ fn check_templates() {
 
 #[test]
 fn check_reports_problems_with_exit_code_1() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let tmp = std::env::temp_dir().join(format!("opo-cli-broken-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     copy_dir(&spec.join("library/templates/IfcBoiler"), &tmp);
@@ -82,7 +82,7 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
 
 #[test]
 fn bake_pack_unpack_check() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let tmp = std::env::temp_dir().join(format!("opo-cli-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let door = tmp.join("examples/door/single-swing-door");
@@ -126,7 +126,7 @@ fn bake_pack_unpack_check() {
 
 #[test]
 fn render_plan_and_model() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let wall = spec.join("library/templates/IfcWall");
     let out = opo()
         .args(["render", "--root"])
@@ -180,7 +180,7 @@ fn render_plan_and_model() {
 
 #[test]
 fn export_then_build() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let tmp = std::env::temp_dir().join(format!("opo-cli-src-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let lib = tmp.join("lib");
@@ -244,7 +244,7 @@ fn export_then_build() {
 
 #[test]
 fn compare_folders() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let wall = spec.join("library/templates/IfcWall");
     let out = opo().arg("compare").arg(&wall).arg(&wall).output().unwrap();
     assert!(out.status.success());

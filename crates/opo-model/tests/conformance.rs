@@ -87,7 +87,7 @@ fn check_attribute(name: &str, v: &Json) -> Result<(), String> {
 
 #[test]
 fn reference_objects() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let mut files = Vec::new();
     ifcx_files(&spec.join("examples/door"), &mut files);
     ifcx_files(&spec.join("library/templates"), &mut files);

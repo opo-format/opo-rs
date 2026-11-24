@@ -171,7 +171,7 @@ fn object_cases() {
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     fixtures.sort();
-    let resolver = SpecResolver(spec.clone());
+    let resolver = SpecResolver(spec.join("conformance/fixtures"));
 
     let (mut total, mut failed, mut report) = (0, 0, Vec::new());
     for fx in &fixtures {
