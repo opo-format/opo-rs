@@ -1,0 +1,19 @@
+[package]
+name = "opo-cli"
+description = "The opo command: check, build, pack and render OPO objects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "opo"
+path = "src/main.rs"
+
+[dependencies]
+opo-check = { path = "../opo-check" }
+
+[lints]
+workspace = true

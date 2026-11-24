@@ -15,15 +15,16 @@ fmt:
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Unit and doc tests (the conformance tests run in `conformance`).
+# Unit and doc tests (integration tests, which read the spec, run in `conformance`).
 test:
-    cargo test --workspace --lib
+    cargo test --workspace --lib --bins
     cargo test --workspace --doc
 
-# Run the conformance suite of the pinned spec version (submodule `opo-spec`).
+# Run the conformance suite and the other integration tests against the pinned spec
+# version (submodule `opo-spec`).
 conformance:
     git submodule update --init opo-spec
-    cargo test --workspace --test conformance
+    cargo test --workspace --tests
 
 # Move the pinned spec version to a commit of the standard repository.
 pin-spec commit:
