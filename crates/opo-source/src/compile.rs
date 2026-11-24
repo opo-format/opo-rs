@@ -62,6 +62,12 @@ pub fn compile_dir(
     timestamp: &str,
 ) -> Result<Compiled, Error> {
     let (object, layers) = read_source_dir(dir)?;
+    if object.get("status").and_then(Json::as_str) == Some("planned") {
+        return Err(Error::Source(format!(
+            "{}: a planned object is a catalogue entry and is not built",
+            dir.display()
+        )));
+    }
     compile(&object, &layers, lib, base, resolver, timestamp)
 }
 

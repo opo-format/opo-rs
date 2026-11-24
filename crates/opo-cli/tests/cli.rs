@@ -302,3 +302,59 @@ fn ifc_from_uml() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn catalogue_and_planned_objects() {
+    let root = std::env::temp_dir().join(format!("opo-cli-catalogue-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let obj = root.join("objects/door-double-swing");
+    std::fs::create_dir_all(&obj).unwrap();
+    std::fs::write(
+        obj.join("object.yaml"),
+        "id: \"door-double-swing\"\nname: \"Double swing door\"\nstatus: \"planned\"\npriority: \"P2\"\ncatalogue_id: \"O-02\"\nifc:\n  class: \"IfcDoor\"\nsheet:\n  scope: \"Two leaves in one frame.\"\n",
+    )
+    .unwrap();
+    // A planned object is listed but not built.
+    let r = opo()
+        .arg("build")
+        .arg(&obj)
+        .arg("--library")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(String::from_utf8_lossy(&r.stdout).contains("planned, not built"));
+    assert!(
+        !root
+            .join("build")
+            .join("library/objects/door-double-swing")
+            .exists()
+    );
+    let md = root.join("build/catalogue.md");
+    let r = opo()
+        .args(["catalogue", "--library"])
+        .arg(&root)
+        .arg("-o")
+        .arg(&md)
+        .output()
+        .unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stdout));
+    assert!(
+        std::fs::read_to_string(&md)
+            .unwrap()
+            .contains("| O-02 | Double swing door |")
+    );
+    // A problem in an entry: exit code 1.
+    std::fs::write(
+        obj.join("object.yaml"),
+        "id: \"door-double-swing\"\nname: \"X\"\nstatus: \"planned\"\n",
+    )
+    .unwrap();
+    let r = opo()
+        .args(["catalogue", "--library"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_eq!(r.status.code(), Some(1));
+    std::fs::remove_dir_all(&root).unwrap();
+}
