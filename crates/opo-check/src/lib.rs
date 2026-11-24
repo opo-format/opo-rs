@@ -17,6 +17,10 @@
 //!    are not null, materials exist, and the mesh volume is within 2 % of `GrossVolume`.
 //! 5. **Baked geometry**: the baked meshes match the recipe solids at the defaults.
 
+mod compare;
+
+pub use compare::{CompareOptions, compare_dirs};
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 

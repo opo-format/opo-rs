@@ -17,6 +17,7 @@ Usage:
   opo build SOURCE... --library ROOT [--base PATH] [-o OUT] [--timestamp DATE] [--package]
   opo export FOLDER --base PATH --library ROOT -o SOURCE
   opo generate --library ROOT [-o OUT] [--timestamp DATE] [CLASS...]
+  opo compare FOLDER_A FOLDER_B [--ignore-generator]
   opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
 
@@ -38,6 +39,8 @@ Commands:
           Generate class templates from <ROOT>/templates/archetypes/*.yaml,
           <ROOT>/templates/classes.yaml and the IFC data in <ROOT>/ifc/, then build them
           like 'opo build' into <OUT>/library/templates/<Class> (default: every class).
+  compare Compare two object folders (type node attributes, parameter order, baked
+          parts, layer nodes); exit 1 on any difference.
   render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
           shaded 3D view (model.medium). Values and inputs are JSON objects.
 
@@ -519,6 +522,35 @@ fn generate(args: &[String]) -> Result<bool, String> {
     Ok(true)
 }
 
+fn compare(args: &[String]) -> Result<bool, String> {
+    let mut opts = opo_check::CompareOptions::default();
+    let mut dirs = Vec::new();
+    for a in args {
+        match a.as_str() {
+            "--ignore-generator" => opts.ignore_generator = true,
+            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s => dirs.push(PathBuf::from(s)),
+        }
+    }
+    let [a, b] = dirs.as_slice() else {
+        return Err("compare needs two object folders".into());
+    };
+    let diffs = opo_check::compare_dirs(a, b, &opts)?;
+    for d in &diffs {
+        println!("  - {d}");
+    }
+    println!(
+        "{}: {}",
+        b.display(),
+        if diffs.is_empty() {
+            "same".to_owned()
+        } else {
+            format!("{} difference(s)", diffs.len())
+        }
+    );
+    Ok(diffs.is_empty())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -534,6 +566,7 @@ fn main() -> ExitCode {
         Some("build") => build(&args[1..]),
         Some("export") => export(&args[1..]),
         Some("generate") => generate(&args[1..]),
+        Some("compare") => compare(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'")),
     };
     match result {
