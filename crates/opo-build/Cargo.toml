@@ -1,0 +1,25 @@
+[package]
+name = "opo-build"
+description = "Bake fallback geometry and pack or unpack .opo packages"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opo-feel = { path = "../opo-feel" }
+opo-model = { path = "../opo-model" }
+opo-ifcx = { path = "../opo-ifcx" }
+opo-recipe = { path = "../opo-recipe" }
+serde_json.workspace = true
+uuid = { version = "1", default-features = false, features = ["v5"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+opo-check = { path = "../opo-check" }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true

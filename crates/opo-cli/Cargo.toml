@@ -14,6 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 opo-check = { path = "../opo-check" }
+opo-build = { path = "../opo-build" }
+opo-ifcx = { path = "../opo-ifcx" }
 
 [lints]
 workspace = true

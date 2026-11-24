@@ -56,3 +56,60 @@ fn check_reports_problems_with_exit_code_1() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stdout).contains("baked mesh differs"));
 }
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for e in std::fs::read_dir(src).unwrap() {
+        let p = e.unwrap().path();
+        let t = dst.join(p.file_name().unwrap());
+        if p.is_dir() {
+            copy_dir(&p, &t);
+        } else {
+            std::fs::copy(&p, &t).unwrap();
+        }
+    }
+}
+
+#[test]
+fn bake_pack_unpack_check() {
+    let spec = spec_dir();
+    let tmp = std::env::temp_dir().join(format!("opo-cli-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let door = tmp.join("examples/door/single-swing-door");
+    copy_dir(&spec.join("examples/door/single-swing-door"), &door);
+    let ok = |c: &mut Command| {
+        let out = c.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // The base defaults to the folder relative to --root.
+    let text = ok(opo().args(["bake", "--root"]).arg(&tmp).arg(&door));
+    assert!(text.contains("meshes"), "{text}");
+    // Nested objects resolve under the spec; the rebaked door passes the check.
+    ok(opo().args(["check", "--root"]).arg(&spec).arg(&door));
+    let package = tmp.join("door.opo");
+    ok(opo().arg("pack").arg(&door).arg("-o").arg(&package));
+    let out = tmp.join("door-unpacked");
+    ok(opo().arg("unpack").arg(&package).arg("-o").arg(&out));
+    assert_eq!(
+        std::fs::read(door.join("object.ifcx")).unwrap(),
+        std::fs::read(out.join("object.ifcx")).unwrap()
+    );
+    // --base is needed outside --root.
+    assert_eq!(
+        opo()
+            .args(["bake", "--root"])
+            .arg(&spec)
+            .arg(&door)
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2)
+    );
+}
