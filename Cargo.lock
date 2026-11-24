@@ -402,6 +402,9 @@ dependencies = [
  "opo-build",
  "opo-check",
  "opo-ifcx",
+ "opo-recipe",
+ "opo-render",
+ "serde_json",
 ]
 
 [[package]]
@@ -436,6 +439,17 @@ dependencies = [
  "opo-feel",
  "opo-ifcx",
  "opo-model",
+ "serde_json",
+]
+
+[[package]]
+name = "opo-render"
+version = "0.1.0"
+dependencies = [
+ "opo-check",
+ "opo-feel",
+ "opo-model",
+ "opo-recipe",
  "serde_json",
 ]
 

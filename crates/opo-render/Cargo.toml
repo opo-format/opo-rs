@@ -1,0 +1,21 @@
+[package]
+name = "opo-render"
+description = "SVG plans and 3D previews of OPO objects, hatched from their own materials"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opo-feel = { path = "../opo-feel" }
+opo-model = { path = "../opo-model" }
+opo-recipe = { path = "../opo-recipe" }
+
+[dev-dependencies]
+opo-check = { path = "../opo-check" }
+serde_json.workspace = true
+
+[lints]
+workspace = true
