@@ -118,7 +118,7 @@ pub fn catalogue(root: &Path) -> Result<Catalogue, Error> {
         }
         let ifc = match (
             class,
-            v.pointer("/ifc/predefined_type").and_then(Json::as_str),
+            v.pointer("/ifc/predefinedType").and_then(Json::as_str),
         ) {
             (Some(c), Some(t)) => format!("{c} · {t}"),
             (Some(c), None) => c.to_owned(),
@@ -201,7 +201,7 @@ mod tests {
         write(
             &root,
             "door-double-swing",
-            "id: \"door-double-swing\"\nname: \"Double swing door\"\nstatus: \"planned\"\npriority: \"P2\"\ncatalogue_id: \"O-02\"\nifc:\n  class: \"IfcDoor\"\n  predefined_type: \"DOOR\"\nsheet:\n  scope: \"Two leaves | one frame.\"\n",
+            "id: \"door-double-swing\"\nname: \"Double swing door\"\nstatus: \"planned\"\npriority: \"P2\"\ncatalogue_id: \"O-02\"\nifc:\n  class: \"IfcDoor\"\n  predefinedType: \"DOOR\"\nsheet:\n  scope: \"Two leaves | one frame.\"\n",
         );
         write(
             &root,
