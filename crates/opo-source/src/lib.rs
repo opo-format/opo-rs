@@ -8,16 +8,19 @@
 //!   (`bsi::ifc::prop::*`) are computed from `opo::ifc.properties`. Baking is left to
 //!   `opo_build::bake`.
 //! - [`export`]: the reverse, for converting existing objects into sources.
+//! - [`generate`]: class templates from archetypes, the per-class table and IFC data.
 
 pub mod yaml;
 
 mod compile;
 mod export;
 mod library;
+mod template;
 
 pub use compile::{Compiled, compile, compile_dir, read_source_dir};
 pub use export::{Exported, export, export_dir};
 pub use library::Library;
+pub use template::{Generated, GeneratorOptions, IfcData, TemplateSources, generate};
 
 use std::fmt;
 use std::path::PathBuf;
