@@ -1,4 +1,7 @@
+use std::any::Any;
 use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
 
 /// Numbers within this distance are equal (spec §4.4).
 pub const EPSILON: f64 = 1e-9;
@@ -21,6 +24,32 @@ pub enum Value {
     List(Vec<Value>),
     /// A context (`{a: 1}`).
     Context(BTreeMap<String, Value>),
+    /// A value owned by the application (for example geometry from a recipe operation).
+    /// Formulas can store it, pass it to functions and put it in lists; arithmetic, comparison
+    /// and paths on it give `null`.
+    Foreign(Foreign),
+}
+
+/// An application value carried through formulas (see [`Value::Foreign`]).
+#[derive(Clone)]
+pub struct Foreign(pub Arc<dyn Any + Send + Sync>);
+
+impl Foreign {
+    /// Wrap an application value.
+    pub fn new<T: Any + Send + Sync>(value: T) -> Self {
+        Foreign(Arc::new(value))
+    }
+
+    /// The value, if it has type `T`.
+    pub fn downcast<T: Any>(&self) -> Option<&T> {
+        self.0.downcast_ref::<T>()
+    }
+}
+
+impl fmt::Debug for Foreign {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Foreign(..)")
+    }
 }
 
 impl Value {
@@ -35,6 +64,7 @@ impl Value {
             (Value::List(a), Value::List(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.feel_eq(y))
             }
+            (Value::Foreign(a), Value::Foreign(b)) => Arc::ptr_eq(&a.0, &b.0),
             (Value::Context(a), Value::Context(b)) => {
                 a.len() == b.len()
                     && a.iter()
@@ -77,7 +107,7 @@ impl Value {
         }
     }
 
-    /// Convert to JSON. Non-finite numbers become `null`.
+    /// Convert to JSON. Non-finite numbers and foreign values become `null`.
     pub fn to_json(&self) -> serde_json::Value {
         match self {
             Value::Null => serde_json::Value::Null,
@@ -90,6 +120,7 @@ impl Value {
             Value::Context(c) => {
                 serde_json::Value::Object(c.iter().map(|(k, v)| (k.clone(), v.to_json())).collect())
             }
+            Value::Foreign(_) => serde_json::Value::Null,
         }
     }
 }
@@ -133,6 +164,19 @@ mod tests {
     fn different_types_are_not_equal() {
         assert!(!Value::Number(1.0).feel_eq(&Value::String("1".into())));
         assert!(!Value::Null.feel_eq(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn foreign_values_compare_by_identity() {
+        let a = Value::Foreign(Foreign::new(5_u8));
+        let b = a.clone();
+        assert!(a.feel_eq(&b));
+        assert!(!a.feel_eq(&Value::Foreign(Foreign::new(5_u8))));
+        match &a {
+            Value::Foreign(f) => assert_eq!(f.downcast::<u8>(), Some(&5)),
+            _ => unreachable!(),
+        }
+        assert_eq!(a.to_json(), serde_json::Value::Null);
     }
 
     #[test]

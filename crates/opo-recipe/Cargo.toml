@@ -1,0 +1,22 @@
+[package]
+name = "opo-recipe"
+description = "Geometry kernel that runs OPO recipes (spec §4.5)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opo-feel = { path = "../opo-feel" }
+opo-model = { path = "../opo-model" }
+serde_json.workspace = true
+geo = "0.33"
+earcutr = "0.5"
+
+[dev-dependencies]
+opo-ifcx = { path = "../opo-ifcx" }
+
+[lints]
+workspace = true
