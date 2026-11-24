@@ -18,6 +18,7 @@ Usage:
   opo export FOLDER --base PATH --library ROOT -o SOURCE
   opo generate --library ROOT [--ifc DIR] [-o OUT] [--timestamp DATE] [CLASS...]
   opo ifc UML_DIR [-o OUT]
+  opo catalogue --library ROOT [-o FILE.md]
   opo compare FOLDER_A FOLDER_B [--ignore-generator]
   opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
@@ -44,6 +45,9 @@ Commands:
   ifc     Read the IFC 4.3 element classes and property set templates from
           buildingSMART's UML sources (schemas/*.uml of IFC4.x-development) and write
           OUT/elements.json and OUT/psets.json (default OUT: .).
+  catalogue
+          Write the object catalogue (Markdown) from <ROOT>/objects/*/object.yaml,
+          planned entries included, and report problems in the entries (exit 1).
   compare Compare two object folders (type node attributes, parameter order, baked
           parts, layer nodes); exit 1 on any difference.
   render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
@@ -371,6 +375,11 @@ fn build(args: &[String]) -> Result<bool, String> {
                 format!("library/{}", rel.to_string_lossy().replace('\\', "/"))
             }
         };
+        let (object, _) = opo_source::read_source_dir(src).map_err(|e| e.to_string())?;
+        if object.get("status").and_then(serde_json::Value::as_str) == Some("planned") {
+            println!("{}: planned, not built", src.display());
+            continue;
+        }
         let built = opo_source::compile_dir(src, &lib, &base, &resolver, &timestamp)
             .map_err(|e| format!("{}: {e}", src.display()))?;
         let mut doc = built.base;
@@ -601,6 +610,36 @@ fn ifc(args: &[String]) -> Result<bool, String> {
     Ok(true)
 }
 
+/// `opo catalogue --library ROOT [-o FILE]`: the object catalogue as Markdown.
+fn catalogue(args: &[String]) -> Result<bool, String> {
+    let (mut library, mut out) = (None::<PathBuf>, None::<PathBuf>);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--library" => library = Some(it.next().ok_or("--library needs a folder")?.into()),
+            "-o" => out = Some(it.next().ok_or("-o needs a file")?.into()),
+            s => return Err(format!("unexpected argument {s}")),
+        }
+    }
+    let library = library.ok_or("catalogue needs --library ROOT")?;
+    let cat = opo_source::catalogue(&library).map_err(|e| e.to_string())?;
+    let md = cat.to_markdown();
+    match out {
+        Some(f) => {
+            if let Some(d) = f.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+            }
+            std::fs::write(&f, md).map_err(|e| format!("{}: {e}", f.display()))?;
+            println!("{} objects → {}", cat.entries.len(), f.display());
+        }
+        None => print!("{md}"),
+    }
+    for p in &cat.problems {
+        println!("  - {p}");
+    }
+    Ok(cat.problems.is_empty())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -618,6 +657,7 @@ fn main() -> ExitCode {
         Some("generate") => generate(&args[1..]),
         Some("compare") => compare(&args[1..]),
         Some("ifc") => ifc(&args[1..]),
+        Some("catalogue") => catalogue(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'")),
     };
     match result {
