@@ -122,9 +122,9 @@ impl Bounds {
         }
     }
     fn add(&mut self, p: [f64; 2]) {
-        for i in 0..2 {
-            self.min[i] = self.min[i].min(p[i]);
-            self.max[i] = self.max[i].max(p[i]);
+        for ((lo, hi), x) in self.min.iter_mut().zip(self.max.iter_mut()).zip(p) {
+            *lo = lo.min(x);
+            *hi = hi.max(x);
         }
     }
     fn empty(&self) -> bool {
@@ -140,7 +140,7 @@ fn representation<'a>(def: &'a TypeDefinition, id: &str) -> Result<&'a Represent
         .ok_or_else(|| Error::NoRepresentation(id.into()))
 }
 
-fn items_of<'a>(rep: &'a Representation) -> impl Iterator<Item = &'a RepresentationItem> {
+fn items_of(rep: &Representation) -> impl Iterator<Item = &RepresentationItem> {
     rep.items
         .iter()
         .flatten()
@@ -448,6 +448,9 @@ fn region_bounds(shape: &opo_recipe::MultiPolygon<f64>) -> (f64, [f64; 2]) {
 
 type V3 = [f64; 3];
 
+/// A projected triangle: depth, screen points, fill colour.
+type Triangle = (f64, [[f64; 2]; 3], String);
+
 fn hex(c: &str) -> [f64; 3] {
     let v =
         |i: usize| u8::from_str_radix(c.get(i..i + 2).unwrap_or("bb"), 16).unwrap_or(0xbb) as f64;
@@ -485,7 +488,7 @@ pub fn model_svg(
     };
     let dot = |a: V3, b: V3| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     // One entry per solid: (depth of its centre, its visible triangles with their depths).
-    let mut solids: Vec<(f64, Vec<(f64, [[f64; 2]; 3], String)>)> = Vec::new();
+    let mut solids: Vec<(f64, Vec<Triangle>)> = Vec::new();
     let mut bounds = Bounds::new();
     for item in items_of(rep) {
         for g in ev
