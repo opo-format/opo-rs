@@ -391,10 +391,12 @@ pub enum Severity {
     Info,
 }
 
-/// A rule set declaration or a rule set's values.
+/// A rule set an object declares in `opo::rules.rulesets` (spec §4.4). Its values come from a
+/// rule-set node ([`RuleSetNode`], decision 0020).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuleSet {
-    /// snake_case id (e.g. `accessibility`).
+    /// snake_case id (e.g. `accessibility`); formulas read `rules.<id>.<field>`.
     pub id: String,
     /// Default rule set, or null for none. Kept exactly as written (absent, null or text).
     #[serde(
@@ -406,21 +408,31 @@ pub struct RuleSet {
     /// Note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Field descriptions: field name to type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Map<String, Json>>,
+}
+
+/// `opo::ruleset`: one regional rule set on its own node, usually in a layer (spec §4.4,
+/// decision 0020).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSetNode {
+    /// The declared rule-set id it gives values for.
+    pub id: String,
+    /// Display name, e.g. `ISO 21542:2021`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// Link to the rule set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
-    /// The regulation the values come from.
+    /// The regulation and clauses the values come from.
+    pub source: String,
+    /// Note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    /// Field descriptions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fields: Option<Map<String, Json>>,
-    /// Field values (FEEL expressions or literals).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub values: Option<JsonMap>,
-    /// Other keys.
-    #[serde(flatten)]
-    pub extra: JsonMap,
+    pub note: Option<String>,
+    /// Field name to FEEL expression or literal.
+    pub values: JsonMap,
 }
 
 // ---------------------------------------------------------------- opo::recipe

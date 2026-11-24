@@ -80,6 +80,7 @@ fn check_attribute(name: &str, v: &Json) -> Result<(), String> {
         "opo::values" | "opo::inputs" => round_trip::<serde_json::Map<String, Json>>(v),
         "opo::representation" | "opo::note" => round_trip::<String>(v),
         "opo::line_class" => round_trip::<LineClass>(v),
+        "opo::ruleset" => round_trip::<RuleSetNode>(v),
         other => Err(format!("{other} is not a schema 0.1 attribute")),
     }
 }
@@ -94,9 +95,19 @@ fn reference_objects() {
     assert!(!files.is_empty());
 
     let (mut attributes, mut types, mut failures) = (0, 0, Vec::new());
+    // Type definitions and rule-set nodes per object folder, checked against each other below.
+    let mut defs = std::collections::BTreeMap::<PathBuf, TypeDefinition>::new();
+    let mut rule_sets = Vec::<(PathBuf, String, RuleSetNode)>::new();
     for f in &files {
         let rel = f.strip_prefix(&spec).unwrap().display().to_string();
         let doc: Json = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
+        let parent = f.parent().unwrap();
+        let folder = if parent.ends_with("layers") {
+            parent.parent().unwrap()
+        } else {
+            parent
+        }
+        .to_path_buf();
         for node in doc["data"].as_array().unwrap() {
             let Some(attrs) = node.get("attributes").and_then(Json::as_object) else {
                 continue;
@@ -107,11 +118,17 @@ fn reference_objects() {
                     failures.push(format!("{rel} {name}: {e}"));
                 }
             }
+            if let Some(rs) = attrs.get("opo::ruleset") {
+                if let Ok(node) = serde_json::from_value::<RuleSetNode>(rs.clone()) {
+                    rule_sets.push((folder.clone(), rel.clone(), node));
+                }
+            }
             if attrs.contains_key("opo::object") {
                 types += 1;
                 match TypeDefinition::from_attributes(attrs) {
                     Err(e) => failures.push(format!("{rel}: {e}")),
                     Ok(def) => {
+                        defs.insert(folder.clone(), def.clone());
                         for issue in def.validate() {
                             failures.push(format!("{rel}: {issue}"));
                         }

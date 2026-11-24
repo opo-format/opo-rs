@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use opo_ifcx::{Document, compose, load_object_dir};
+use opo_ifcx::{Document, compose, layer_overlaps, load_object_dir};
 use serde_json::Value as Json;
 
 fn spec_dir() -> PathBuf {
@@ -79,6 +79,12 @@ fn objects_compose_and_variants_resolve() {
             failures.push(format!("{name}: object.ifcx changes on write"));
         }
 
+        for o in layer_overlaps(&obj.layers) {
+            failures.push(format!(
+                "{name}: layers {} and {} both set {} on {}",
+                o.layers.0, o.layers.1, o.attribute, o.path
+            ));
+        }
         for (file, _) in &obj.layers {
             let c = obj.compose_with(&[file]).unwrap();
             for (from, to) in c.dangling() {

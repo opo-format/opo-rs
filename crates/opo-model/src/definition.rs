@@ -7,7 +7,7 @@ use serde_json::{Map, Value as Json};
 use crate::attributes::*;
 
 /// Every `opo::` attribute declared by schema 0.1 (`schema/opo@v0.1.ifcx`).
-pub const ATTRIBUTE_NAMES: [&str; 17] = [
+pub const ATTRIBUTE_NAMES: [&str; 18] = [
     "opo::object",
     "opo::parameters",
     "opo::slots",
@@ -25,6 +25,7 @@ pub const ATTRIBUTE_NAMES: [&str; 17] = [
     "opo::ports",
     "opo::line_class",
     "opo::note",
+    "opo::ruleset",
 ];
 
 /// An attribute that does not match its schema.
@@ -205,6 +206,32 @@ impl TypeDefinition {
             .as_ref()
             .and_then(|r| r.checks.as_deref())
             .unwrap_or_default()
+    }
+
+    /// Check a rule-set node against this definition: its id must be declared in
+    /// `opo::rules.rulesets`, and every value must name a declared field (when fields are
+    /// declared).
+    pub fn check_rule_set(&self, node: &RuleSetNode) -> Vec<String> {
+        let declared = self
+            .rules
+            .as_ref()
+            .and_then(|r| r.rulesets.as_deref())
+            .unwrap_or_default();
+        let Some(decl) = declared.iter().find(|d| d.id == node.id) else {
+            return vec![format!(
+                "rule set '{}' is not declared by the object",
+                node.id
+            )];
+        };
+        match &decl.fields {
+            Some(fields) => node
+                .values
+                .keys()
+                .filter(|k| !fields.contains_key(*k))
+                .map(|k| format!("rule set '{}': '{k}' is not a declared field", node.id))
+                .collect(),
+            None => Vec::new(),
+        }
     }
 
     /// The parameter with this name.
@@ -390,6 +417,32 @@ mod tests {
         a.insert("opo::slots".into(), json!([]));
         let def = TypeDefinition::from_attributes(&a).unwrap();
         assert_eq!(def.to_attributes()["opo::slots"], json!([]));
+    }
+
+    #[test]
+    fn rule_set_nodes_are_checked_against_declarations() {
+        let mut a = minimal();
+        a.insert("opo::rules".into(), json!({"rulesets": [{"id": "stairs", "default": null, "fields": {"riser_max": "length"}}]}));
+        let def = TypeDefinition::from_attributes(&a).unwrap();
+        let node = |id: &str, field: &str| -> RuleSetNode {
+            serde_json::from_value(
+                json!({"id": id, "source": "test", "values": {field: "mm(220)"}}),
+            )
+            .unwrap()
+        };
+        assert!(def.check_rule_set(&node("stairs", "riser_max")).is_empty());
+        assert_eq!(def.check_rule_set(&node("guards", "riser_max")).len(), 1);
+        assert_eq!(def.check_rule_set(&node("stairs", "going_min")).len(), 1);
+    }
+
+    #[test]
+    fn rule_set_declaration_rejects_values() {
+        let mut a = minimal();
+        a.insert(
+            "opo::rules".into(),
+            json!({"rulesets": [{"id": "stairs", "values": {}}]}),
+        );
+        assert!(TypeDefinition::from_attributes(&a).is_err());
     }
 
     #[test]

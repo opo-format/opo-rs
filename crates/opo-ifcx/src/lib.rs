@@ -305,6 +305,46 @@ impl Composition {
     }
 }
 
+/// Two layers set the same attribute of the same node (not allowed, decision 0020).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overlap {
+    /// Node path.
+    pub path: String,
+    /// Attribute name.
+    pub attribute: String,
+    /// The two layers, in order.
+    pub layers: (String, String),
+}
+
+/// Find attributes that more than one layer sets on the same node. Layers may add nodes and
+/// add entries to `children` and `inherits`, but must not set the same attribute (spec §5.2).
+pub fn layer_overlaps(layers: &[(String, Document)]) -> Vec<Overlap> {
+    let mut first = std::collections::HashMap::<(String, String), String>::new();
+    let mut out = Vec::new();
+    for (name, doc) in layers {
+        let mut here = HashSet::new();
+        for n in &doc.data {
+            for k in n.attributes.iter().flat_map(|a| a.keys()) {
+                let key = (n.path.clone(), k.clone());
+                if !here.insert(key.clone()) {
+                    continue;
+                }
+                match first.get(&key) {
+                    Some(other) => out.push(Overlap {
+                        path: key.0.clone(),
+                        attribute: key.1.clone(),
+                        layers: (other.clone(), name.clone()),
+                    }),
+                    None => {
+                        first.insert(key, name.clone());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// An unpacked OPO object folder: the base document and its layers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjectDir {
@@ -435,6 +475,23 @@ mod tests {
             compose(&[doc(json!([{"path": "a", "children": {"x": 1}}]))]),
             Err(Error::BadLink { .. })
         ));
+    }
+
+    #[test]
+    fn overlapping_layers_are_reported() {
+        let a = doc(json!([{"path": "t", "attributes": {"x": 1}, "children": {"c": "p"}}]));
+        let b = doc(
+            json!([{"path": "t", "attributes": {"x": 2}, "children": {"d": "q"}}, {"path": "n", "attributes": {"x": 3}}]),
+        );
+        let o = layer_overlaps(&[("a".into(), a), ("b".into(), b)]);
+        assert_eq!(
+            o,
+            vec![Overlap {
+                path: "t".into(),
+                attribute: "x".into(),
+                layers: ("a".into(), "b".into())
+            }]
+        );
     }
 
     #[test]
