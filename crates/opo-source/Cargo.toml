@@ -16,6 +16,7 @@ opo-recipe = { path = "../opo-recipe" }
 opo-build = { path = "../opo-build" }
 serde_json.workspace = true
 yaml-rust2 = { version = "0.13", default-features = false }
+quick-xml = { version = "0.38", default-features = false }
 
 [dev-dependencies]
 opo-check = { path = "../opo-check" }
