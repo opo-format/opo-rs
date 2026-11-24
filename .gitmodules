@@ -1,0 +1,3 @@
+[submodule "opo-spec"]
+	path = opo-spec
+	url = https://github.com/opo-format/opo
