@@ -157,3 +157,50 @@ fn broken_objects_are_reported() {
         r.errors
     );
 }
+
+#[test]
+fn provenance_is_checked_and_to_verify_reported() {
+    let spec = spec_dir();
+    let (resolver, ifc) = options(&spec);
+    let opts = Options {
+        resolver: &resolver,
+        ifc: Some(&ifc),
+    };
+    let src = spec.join("library/templates/IfcBoiler");
+    let first = |a: &serde_json::Map<String, serde_json::Value>| {
+        a["opo::parameters"][0]["name"].as_str().unwrap().to_owned()
+    };
+
+    let d = copy(&src, "provenance-ok");
+    edit(&d, |a| {
+        let p = first(a);
+        a.insert(
+            "opo::provenance".into(),
+            serde_json::json!({
+                format!("parameters.{p}.default"): {"source": "x", "status": "to_verify", "note": "Check."}
+            }),
+        );
+    });
+    let r = check_dir(&d, &opts);
+    assert!(r.ok(), "{:?}", r.errors);
+    assert_eq!(r.to_verify.len(), 1);
+
+    let d = copy(&src, "provenance-bad");
+    edit(&d, |a| {
+        a.insert(
+            "opo::provenance".into(),
+            serde_json::json!({
+                "parameters.no_such_parameter.default": {"status": "norm", "source": "x"},
+                "values.width": {"status": "maker"}
+            }),
+        );
+    });
+    let r = check_dir(&d, &opts);
+    for want in ["no_such_parameter.default' on", "needs a source"] {
+        assert!(
+            r.errors.iter().any(|e| e.contains(want)),
+            "{want}: {:?}",
+            r.errors
+        );
+    }
+}

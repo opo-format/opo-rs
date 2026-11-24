@@ -7,7 +7,7 @@ use serde_json::{Map, Value as Json};
 use crate::attributes::*;
 
 /// Every `opo::` attribute declared by schema 0.1 (`schema/opo@v0.1.ifcx`).
-pub const ATTRIBUTE_NAMES: [&str; 18] = [
+pub const ATTRIBUTE_NAMES: [&str; 19] = [
     "opo::object",
     "opo::parameters",
     "opo::slots",
@@ -26,6 +26,7 @@ pub const ATTRIBUTE_NAMES: [&str; 18] = [
     "opo::line_class",
     "opo::note",
     "opo::ruleset",
+    "opo::provenance",
 ];
 
 /// An attribute that does not match its schema.

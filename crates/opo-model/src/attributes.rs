@@ -435,6 +435,89 @@ pub struct RuleSetNode {
     pub values: JsonMap,
 }
 
+// ------------------------------------------------------------- opo::provenance
+
+/// Where a value comes from (decision 0017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProvenanceStatus {
+    /// Taken from a norm.
+    Norm,
+    /// Taken from a maker's data.
+    Maker,
+    /// Common practice, not from a single source.
+    Typical,
+    /// Chosen to illustrate; not from a source.
+    Illustrative,
+    /// Not yet checked against its source.
+    ToVerify,
+}
+
+/// One entry of `opo::provenance`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProvenanceEntry {
+    /// Id of the source in the library's references registry, or a citation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Status of the value.
+    pub status: ProvenanceStatus,
+    /// What the value is, or what to check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `opo::provenance`: value path on the same node (e.g. `values.nominal_width`,
+/// `parameters.handle_height.default`, `ruleset.values.min_clear_width`) → entry.
+pub type Provenance = std::collections::BTreeMap<String, ProvenanceEntry>;
+
+/// Problems in an `opo::provenance` map: path shape, a missing source for `norm` and
+/// `maker`, a missing note for the other statuses, empty texts.
+pub fn check_provenance(p: &Provenance) -> Vec<String> {
+    let mut errs = Vec::new();
+    for (path, e) in p {
+        let mut parts = path.split('.');
+        let head_ok = parts.next().is_some_and(|h| {
+            h.starts_with(|c: char| c.is_ascii_lowercase())
+                && h.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+        });
+        let rest: Vec<&str> = parts.collect();
+        if !head_ok
+            || rest.is_empty()
+            || rest
+                .iter()
+                .any(|s| s.is_empty() || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        {
+            errs.push(format!(
+                "provenance path '{path}' is not attribute.key[.key…]"
+            ));
+        }
+        let empty = |t: &Option<String>| t.as_deref().is_some_and(str::is_empty);
+        if empty(&e.source) || empty(&e.note) {
+            errs.push(format!(
+                "provenance '{path}': source and note must not be empty"
+            ));
+        }
+        match e.status {
+            ProvenanceStatus::Norm | ProvenanceStatus::Maker if e.source.is_none() => errs.push(
+                format!("provenance '{path}': status {:?} needs a source", e.status),
+            ),
+            ProvenanceStatus::Typical
+            | ProvenanceStatus::Illustrative
+            | ProvenanceStatus::ToVerify
+                if e.note.is_none() =>
+            {
+                errs.push(format!(
+                    "provenance '{path}': status {:?} needs a note",
+                    e.status
+                ))
+            }
+            _ => {}
+        }
+    }
+    errs
+}
+
 // ---------------------------------------------------------------- opo::recipe
 
 /// Recipe operations (spec §4.5).
@@ -1018,3 +1101,47 @@ pub type Values = JsonMap;
 
 /// `opo::inputs`: drawn geometry of an instance, per slot (null clears the slot).
 pub type Inputs = JsonMap;
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    fn read(v: serde_json::Value) -> Provenance {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn valid_entries() {
+        let p = read(serde_json::json!({
+            "values.nominal_width": {"source": "bs-4787", "status": "norm"},
+            "parameters.handle_height.default": {"status": "typical", "note": "Common height."},
+            "ruleset.values.min_clear_width": {"source": "iso-21542", "status": "to_verify", "note": "Check."}
+        }));
+        assert!(check_provenance(&p).is_empty());
+    }
+
+    #[test]
+    fn invalid_entries() {
+        let p = read(serde_json::json!({
+            "values.a": {"status": "maker"},
+            "values.b": {"source": "x", "status": "to_verify"},
+            "values": {"status": "illustrative", "note": "n"},
+            "Values.c": {"status": "illustrative", "note": "n"},
+            "values.d": {"source": "", "status": "norm"}
+        }));
+        let errs = check_provenance(&p);
+        assert_eq!(errs.len(), 5, "{errs:?}");
+        assert!(
+            serde_json::from_value::<Provenance>(
+                serde_json::json!({"values.a": {"status": "guess"}})
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<Provenance>(
+                serde_json::json!({"values.a": {"status": "norm", "source": "s", "extra": 1}})
+            )
+            .is_err()
+        );
+    }
+}
