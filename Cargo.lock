@@ -278,6 +278,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "opo-check"
+version = "0.1.0"
+dependencies = [
+ "opo-feel",
+ "opo-ifcx",
+ "opo-model",
+ "opo-recipe",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "opo-cli"
+version = "0.1.0"
+dependencies = [
+ "opo-check",
+]
+
+[[package]]
 name = "opo-feel"
 version = "0.1.0"
 dependencies = [
