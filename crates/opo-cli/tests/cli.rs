@@ -358,3 +358,52 @@ fn catalogue_and_planned_objects() {
     assert_eq!(r.status.code(), Some(1));
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn coverage_table() {
+    let root = std::env::temp_dir().join(format!("opo-cli-coverage-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("templates")).unwrap();
+    std::fs::create_dir_all(root.join("ifc")).unwrap();
+    std::fs::write(
+        root.join("ifc/elements.json"),
+        r#"[[0, "IfcElement", true, null], [1, "IfcBuiltElement", false, null], [2, "IfcWall", false, ["STANDARD"]]]"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("templates/classes.yaml"),
+        "IfcWall:\n  archetype: \"wall\"\n",
+    )
+    .unwrap();
+    let md = root.join("build/coverage.md");
+    let r = opo()
+        .args(["coverage", "--library"])
+        .arg(&root)
+        .arg("--ifc")
+        .arg(root.join("ifc"))
+        .arg("-o")
+        .arg(&md)
+        .output()
+        .unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(
+        std::fs::read_to_string(&md)
+            .unwrap()
+            .contains("| · `IfcWall` | wall | yes | STANDARD | — |")
+    );
+    // A class that is not a concrete element class: exit code 1.
+    std::fs::write(
+        root.join("templates/classes.yaml"),
+        "IfcFoo:\n  archetype: \"wall\"\n",
+    )
+    .unwrap();
+    let r = opo()
+        .args(["coverage", "--library"])
+        .arg(&root)
+        .arg("--ifc")
+        .arg(root.join("ifc"))
+        .output()
+        .unwrap();
+    assert_eq!(r.status.code(), Some(1));
+    std::fs::remove_dir_all(&root).unwrap();
+}

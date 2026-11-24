@@ -14,6 +14,7 @@ pub mod yaml;
 
 mod catalogue;
 mod compile;
+mod coverage;
 mod export;
 mod ifc_uml;
 mod library;
@@ -21,6 +22,7 @@ mod template;
 
 pub use catalogue::{Catalogue, Entry, catalogue};
 pub use compile::{Compiled, compile, compile_dir, read_source_dir};
+pub use coverage::{Coverage, CoverageRow, coverage};
 pub use export::{Exported, export, export_dir};
 pub use ifc_uml::extract_ifc_uml;
 pub use library::Library;

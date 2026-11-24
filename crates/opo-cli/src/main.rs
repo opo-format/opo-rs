@@ -19,6 +19,7 @@ Usage:
   opo generate --library ROOT [--ifc DIR] [-o OUT] [--timestamp DATE] [CLASS...]
   opo ifc UML_DIR [-o OUT]
   opo catalogue --library ROOT [-o FILE.md]
+  opo coverage --library ROOT --ifc DIR [-o FILE.md]
   opo compare FOLDER_A FOLDER_B [--ignore-generator]
   opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
@@ -48,6 +49,11 @@ Commands:
   catalogue
           Write the object catalogue (Markdown) from <ROOT>/objects/*/object.yaml,
           planned entries included, and report problems in the entries (exit 1).
+  coverage
+          Write the IFC coverage table (Markdown): every concrete IFC element class with
+          its archetype, template, predefined types and library objects, from the IFC
+          data in DIR, <ROOT>/templates/classes.yaml and <ROOT>/objects; exit 1 if the
+          per-class table names a class that is not a concrete element class.
   compare Compare two object folders (type node attributes, parameter order, baked
           parts, layer nodes); exit 1 on any difference.
   render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
@@ -636,6 +642,39 @@ fn catalogue(args: &[String]) -> Result<bool, String> {
     Ok(cat.problems.is_empty())
 }
 
+/// `opo coverage --library ROOT --ifc DIR [-o FILE]`: the IFC coverage table as Markdown.
+fn coverage(args: &[String]) -> Result<bool, String> {
+    let (mut library, mut ifc, mut out) = (None::<PathBuf>, None::<PathBuf>, None::<PathBuf>);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
+        match arg.as_str() {
+            "--library" => library = Some(next("a folder")?.into()),
+            "--ifc" => ifc = Some(next("a folder")?.into()),
+            "-o" => out = Some(next("a file")?.into()),
+            s => return Err(format!("unexpected argument {s}")),
+        }
+    }
+    let library = library.ok_or("coverage needs --library ROOT")?;
+    let ifc = ifc.ok_or("coverage needs --ifc DIR (the output of opo ifc)")?;
+    let cov = opo_source::coverage(&library, &ifc).map_err(|e| e.to_string())?;
+    let md = cov.to_markdown();
+    match out {
+        Some(f) => {
+            if let Some(d) = f.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+            }
+            std::fs::write(&f, md).map_err(|e| format!("{}: {e}", f.display()))?;
+            println!("{} classes → {}", cov.rows.len(), f.display());
+        }
+        None => print!("{md}"),
+    }
+    for c in &cov.unknown {
+        println!("  - templates/classes.yaml: {c} is not a concrete IFC element class");
+    }
+    Ok(cov.unknown.is_empty())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -654,6 +693,7 @@ fn main() -> ExitCode {
         Some("compare") => compare(&args[1..]),
         Some("ifc") => ifc(&args[1..]),
         Some("catalogue") => catalogue(&args[1..]),
+        Some("coverage") => coverage(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'")),
     };
     match result {
