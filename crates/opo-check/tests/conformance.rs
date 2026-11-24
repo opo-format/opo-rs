@@ -12,19 +12,29 @@ fn spec_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../opo-spec"))
 }
 
+/// The IFC property set table written by `just ifc` (or `$OPO_IFC_DIR/psets.json`).
+fn ifc_psets() -> PathBuf {
+    let p = std::env::var_os("OPO_IFC_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ifc"))
+        .join("psets.json");
+    assert!(p.exists(), "{} is missing; run `just ifc`", p.display());
+    p
+}
+
 fn options(spec: &Path) -> (DirResolver, IfcTemplates) {
     (
         DirResolver {
             prefix: "opo-format.org/".into(),
             root: spec.to_path_buf(),
         },
-        IfcTemplates::read(&spec.join("tools/ifc4x3_psets.json")).expect("IFC templates"),
+        IfcTemplates::read(&ifc_psets()).expect("IFC templates"),
     )
 }
 
 #[test]
 fn reference_objects_are_valid() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let (resolver, ifc) = options(&spec);
     let opts = Options {
         resolver: &resolver,
@@ -92,7 +102,7 @@ fn edit(dir: &Path, f: impl FnOnce(&mut serde_json::Map<String, serde_json::Valu
 
 #[test]
 fn broken_objects_are_reported() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let (resolver, ifc) = options(&spec);
     let opts = Options {
         resolver: &resolver,
@@ -160,7 +170,7 @@ fn broken_objects_are_reported() {
 
 #[test]
 fn provenance_is_checked_and_to_verify_reported() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let (resolver, ifc) = options(&spec);
     let opts = Options {
         resolver: &resolver,

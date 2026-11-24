@@ -58,8 +58,8 @@ Options:
   --base PATH  Repository path of the object, used for baked node ids
                (default: the folder relative to --root)
   -o PATH      Output file or folder
-  --ifc FILE   IFC 4.3 property template table (default: <root>/tools/ifc4x3_psets.json
-               if it exists; otherwise the IFC name check is skipped)
+  --ifc FILE   IFC 4.3 property template table (psets.json written by 'opo ifc'); without
+               it the IFC name check is skipped
   -h, --help   Show this help
 ";
 
@@ -92,11 +92,7 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, String> {
 
 fn check(args: &[String]) -> Result<bool, String> {
     let a = parse_check(args)?;
-    let ifc_path = a
-        .ifc
-        .clone()
-        .or_else(|| Some(a.root.join("tools/ifc4x3_psets.json")).filter(|p| p.exists()));
-    let ifc = ifc_path.as_deref().map(IfcTemplates::read).transpose()?;
+    let ifc = a.ifc.as_deref().map(IfcTemplates::read).transpose()?;
     let resolver = DirResolver {
         prefix: "opo-format.org/".into(),
         root: a.root.clone(),

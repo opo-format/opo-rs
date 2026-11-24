@@ -15,6 +15,16 @@ fn spec_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../opo-spec"))
 }
 
+/// The IFC property set table written by `just ifc` (or `$OPO_IFC_DIR/psets.json`).
+fn ifc_psets() -> PathBuf {
+    let p = std::env::var_os("OPO_IFC_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ifc"))
+        .join("psets.json");
+    assert!(p.exists(), "{} is missing; run `just ifc`", p.display());
+    p
+}
+
 fn close(a: &Json, b: &Json) -> bool {
     match (a, b) {
         (Json::Number(x), Json::Number(y)) => {
@@ -46,7 +56,7 @@ const OBJECTS: [&str; 10] = [
 
 #[test]
 fn export_compile_round_trip() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let resolver = DirResolver {
         prefix: "opo-format.org/".into(),
         root: spec.clone(),
@@ -143,7 +153,7 @@ fn export_compile_round_trip() {
         for (f, d) in &built.layers {
             std::fs::write(out.join("layers").join(f), d.to_json()).unwrap();
         }
-        let ifc = IfcTemplates::read(&spec.join("tools/ifc4x3_psets.json")).unwrap();
+        let ifc = IfcTemplates::read(&ifc_psets()).unwrap();
         let r = check_dir(
             &out,
             &Options {

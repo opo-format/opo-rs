@@ -12,6 +12,16 @@ fn spec_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../opo-spec"))
 }
 
+/// The IFC property set table written by `just ifc` (or `$OPO_IFC_DIR/psets.json`).
+fn ifc_psets() -> PathBuf {
+    let p = std::env::var_os("OPO_IFC_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ifc"))
+        .join("psets.json");
+    assert!(p.exists(), "{} is missing; run `just ifc`", p.display());
+    p
+}
+
 fn copy_dir(src: &Path, dst: &Path) {
     std::fs::create_dir_all(dst).unwrap();
     for e in std::fs::read_dir(src).unwrap() {
@@ -45,12 +55,12 @@ fn children(doc: &Document) -> serde_json::Map<String, serde_json::Value> {
 
 #[test]
 fn rebaked_templates_keep_their_nodes_and_pass_the_check() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let resolver = DirResolver {
         prefix: "opo-format.org/".into(),
         root: spec.clone(),
     };
-    let ifc = IfcTemplates::read(&spec.join("tools/ifc4x3_psets.json")).unwrap();
+    let ifc = IfcTemplates::read(&ifc_psets()).unwrap();
     let opts = Options {
         resolver: &resolver,
         ifc: Some(&ifc),
@@ -94,7 +104,7 @@ fn rebaked_templates_keep_their_nodes_and_pass_the_check() {
 
 #[test]
 fn rebaking_the_door_fixes_its_stale_meshes() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let resolver = DirResolver {
         prefix: "opo-format.org/".into(),
         root: spec.clone(),
@@ -128,7 +138,7 @@ fn rebaking_the_door_fixes_its_stale_meshes() {
 
 #[test]
 fn pack_and_unpack_round_trip() {
-    let spec = spec_dir();
+    let spec = spec_dir().join("conformance/fixtures");
     let src = spec.join("library/templates/IfcWall");
     let (a, b) = (temp("pack-a.opo"), temp("pack-b.opo"));
     assert_eq!(pack(&src, &a).unwrap(), 2, "object.ifcx and one layer");
