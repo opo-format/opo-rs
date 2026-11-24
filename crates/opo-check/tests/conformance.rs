@@ -53,18 +53,8 @@ fn reference_objects_are_valid() {
             ));
         }
     }
-    // The door's baked meshes predate its v0.3 recipe (opo#11); everything else must pass.
     let door = check_dir(&spec.join("examples/door/single-swing-door"), &opts);
-    let stale = |e: &&String| e.starts_with("baked mesh differs");
-    problems.extend(
-        door.errors
-            .iter()
-            .filter(|e| !stale(e))
-            .map(|e| format!("door: {e}")),
-    );
-    if door.errors.iter().filter(stale).count() != 1 {
-        problems.push("door: expected exactly the known baked-mesh problem (opo#11)".into());
-    }
+    problems.extend(door.errors.iter().map(|e| format!("door: {e}")));
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
