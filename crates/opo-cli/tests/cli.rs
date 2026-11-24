@@ -47,14 +47,24 @@ fn check_templates() {
 #[test]
 fn check_reports_problems_with_exit_code_1() {
     let spec = spec_dir();
+    let tmp = std::env::temp_dir().join(format!("opo-cli-broken-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    copy_dir(&spec.join("library/templates/IfcBoiler"), &tmp);
+    let file = tmp.join("object.ifcx");
+    let text = std::fs::read_to_string(&file).unwrap().replacen(
+        "\"opo::object\"",
+        "\"opo::colour\": \"red\", \"opo::object\"",
+        1,
+    );
+    std::fs::write(&file, text).unwrap();
     let out = opo()
         .args(["check", "--root"])
         .arg(&spec)
-        .arg(spec.join("examples/door/single-swing-door"))
+        .arg(&tmp)
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("baked mesh differs"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("opo::colour is not declared"));
 }
 
 fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
