@@ -1,0 +1,24 @@
+[package]
+name = "opo-source"
+description = "Read, compile and export the YAML sources of OPO objects (proposal 0002)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opo-feel = { path = "../opo-feel" }
+opo-model = { path = "../opo-model" }
+opo-ifcx = { path = "../opo-ifcx" }
+opo-recipe = { path = "../opo-recipe" }
+opo-build = { path = "../opo-build" }
+serde_json.workspace = true
+yaml-rust2 = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+opo-check = { path = "../opo-check" }
+
+[lints]
+workspace = true

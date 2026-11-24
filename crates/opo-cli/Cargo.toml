@@ -18,6 +18,7 @@ opo-build = { path = "../opo-build" }
 opo-ifcx = { path = "../opo-ifcx" }
 opo-recipe = { path = "../opo-recipe" }
 opo-render = { path = "../opo-render" }
+opo-source = { path = "../opo-source" }
 serde_json.workspace = true
 
 [lints]

@@ -14,6 +14,8 @@ Usage:
   opo bake [--root DIR] [--base PATH] FOLDER...
   opo pack FOLDER [-o FILE]
   opo unpack FILE [-o FOLDER]
+  opo build SOURCE... --library ROOT [--base PATH] [-o OUT] [--timestamp DATE] [--package]
+  opo export FOLDER --base PATH --library ROOT -o SOURCE
   opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
 
@@ -24,6 +26,13 @@ Commands:
           geometry in its object.ifcx (meshes, plan curves, void).
   pack    Write the .opo package of an object folder (default: <folder>.opo).
   unpack  Extract a .opo package (default: a folder named after the file).
+  build   Compile YAML object sources (object.yaml + layers/*.yaml, proposal 0002) with the
+          library's registries, bake the fallback geometry, and write
+          <OUT>/<base>/object.ifcx + layers (or a .opo package with --package).
+          The base defaults to library/<source path relative to ROOT>; OUT defaults
+          to <ROOT>/build. Nested objects resolve under OUT.
+  export  Convert an object folder (IFCX) into YAML sources; registry entries are
+          merged into the library's references.yaml and styles/.
   render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
           shaded 3D view (model.medium). Values and inputs are JSON objects.
 
@@ -274,6 +283,156 @@ fn render(args: &[String]) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Today's date (UTC) as YYYY-MM-DD.
+fn today() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0) as i64;
+    // Civil date from days since 1970-01-01 (H. Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn build(args: &[String]) -> Result<bool, String> {
+    let (mut library, mut base, mut out, mut timestamp, mut package) = (
+        None::<PathBuf>,
+        None::<String>,
+        None::<PathBuf>,
+        today(),
+        false,
+    );
+    let mut sources = Vec::<PathBuf>::new();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
+        match arg.as_str() {
+            "--library" => library = Some(next("a folder")?.into()),
+            "--base" => base = Some(next("a path")?),
+            "-o" => out = Some(next("a folder")?.into()),
+            "--timestamp" => timestamp = next("a date")?,
+            "--package" => package = true,
+            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s => sources.push(s.into()),
+        }
+    }
+    let library = library.ok_or("build needs --library ROOT")?;
+    if sources.is_empty() {
+        return Err("build needs at least one source folder".into());
+    }
+    if base.is_some() && sources.len() > 1 {
+        return Err("--base applies to one source only".into());
+    }
+    let lib = opo_source::Library::load(&library).map_err(|e| e.to_string())?;
+    let out = out.unwrap_or_else(|| library.join("build"));
+    let root_abs = library
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", library.display()))?;
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: out.clone(),
+    };
+    for src in &sources {
+        let base = match &base {
+            Some(b) => b.clone(),
+            None => {
+                let abs = src
+                    .canonicalize()
+                    .map_err(|e| format!("{}: {e}", src.display()))?;
+                let rel = abs.strip_prefix(&root_abs).map_err(|_| {
+                    format!("{} is not under --library; give --base", src.display())
+                })?;
+                format!("library/{}", rel.to_string_lossy().replace('\\', "/"))
+            }
+        };
+        let built = opo_source::compile_dir(src, &lib, &base, &resolver, &timestamp)
+            .map_err(|e| format!("{}: {e}", src.display()))?;
+        let mut doc = built.base;
+        let r = opo_build::bake(&mut doc, &resolver, &base)
+            .map_err(|e| format!("{}: {e}", src.display()))?;
+        let dir = out.join(&base);
+        std::fs::create_dir_all(dir.join("layers"))
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
+        std::fs::write(dir.join("object.ifcx"), doc.to_json()).map_err(|e| e.to_string())?;
+        for (f, d) in &built.layers {
+            std::fs::write(dir.join("layers").join(f), d.to_json()).map_err(|e| e.to_string())?;
+        }
+        if built.layers.is_empty() {
+            let _ = std::fs::remove_dir(dir.join("layers"));
+        }
+        if package {
+            let file = dir.with_extension("opo");
+            opo_build::pack(&dir, &file).map_err(|e| e.to_string())?;
+            println!(
+                "{}: {} ({} meshes, {} curves)",
+                src.display(),
+                file.display(),
+                r.meshes,
+                r.curves
+            );
+        } else {
+            println!(
+                "{}: {} ({} meshes, {} curves, {} layers)",
+                src.display(),
+                dir.display(),
+                r.meshes,
+                r.curves,
+                built.layers.len()
+            );
+        }
+    }
+    Ok(true)
+}
+
+fn export(args: &[String]) -> Result<bool, String> {
+    let (mut library, mut base, mut out, mut folder) = (
+        None::<PathBuf>,
+        None::<String>,
+        None::<PathBuf>,
+        None::<PathBuf>,
+    );
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
+        match arg.as_str() {
+            "--library" => library = Some(next("a folder")?.into()),
+            "--base" => base = Some(next("a path")?),
+            "-o" => out = Some(next("a folder")?.into()),
+            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s if folder.is_none() => folder = Some(s.into()),
+            s => return Err(format!("unexpected argument {s}")),
+        }
+    }
+    let (folder, library) = (
+        folder.ok_or("export needs an object folder")?,
+        library.ok_or("export needs --library ROOT")?,
+    );
+    let (base, out) = (
+        base.ok_or("export needs --base PATH (the object's repository path)")?,
+        out.ok_or("export needs -o SOURCE")?,
+    );
+    let ex = opo_source::export_dir(&folder, &base).map_err(|e| e.to_string())?;
+    let mut lib = opo_source::Library::load(&library).map_err(|e| e.to_string())?;
+    lib.merge(&ex.library).map_err(|e| e.to_string())?;
+    lib.save(&library).map_err(|e| e.to_string())?;
+    ex.write(&out).map_err(|e| e.to_string())?;
+    println!(
+        "{}: object.yaml and {} layers; registries in {}",
+        out.display(),
+        ex.layers.len(),
+        library.display()
+    );
+    Ok(true)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -286,6 +445,8 @@ fn main() -> ExitCode {
         Some("pack") => pack(&args[1..]),
         Some("unpack") => unpack(&args[1..]),
         Some("render") => render(&args[1..]),
+        Some("build") => build(&args[1..]),
+        Some("export") => export(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'")),
     };
     match result {
