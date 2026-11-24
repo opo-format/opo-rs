@@ -26,7 +26,7 @@ pub use builtins::is_builtin;
 pub use error::Error;
 pub use eval::{Env, Scope, eval};
 pub use parser::{Expr, Source, free_names, parse};
-pub use value::{EPSILON, Value};
+pub use value::{EPSILON, Foreign, Value};
 
 /// Parse and evaluate an expression in one step.
 ///
