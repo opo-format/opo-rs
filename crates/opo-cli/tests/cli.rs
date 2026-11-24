@@ -241,3 +241,19 @@ fn export_then_build() {
         "--library is required"
     );
 }
+
+#[test]
+fn compare_folders() {
+    let spec = spec_dir();
+    let wall = spec.join("library/templates/IfcWall");
+    let out = opo().arg("compare").arg(&wall).arg(&wall).output().unwrap();
+    assert!(out.status.success());
+    let out = opo()
+        .arg("compare")
+        .arg(&wall)
+        .arg(spec.join("library/templates/IfcSlab"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("type node id"));
+}

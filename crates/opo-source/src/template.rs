@@ -216,7 +216,24 @@ pub fn generate(
         .and_then(Json::as_object)
         .cloned()
         .unwrap_or_default();
-    let properties = merge_named_flat(ifc_in.get("properties"), class_ifc.get("properties"));
+    // A formula applies wherever the class has that property (proposal 0002 §4): property-set
+    // keys whose set the class does not have are dropped; IFC attributes (bsi::…) are kept.
+    let class_sets: Vec<&str> = ifc
+        .sets
+        .get(class)
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    let properties: Map<String, Json> =
+        merge_named_flat(ifc_in.get("properties"), class_ifc.get("properties"))
+            .into_iter()
+            .filter(|(k, _)| {
+                k.starts_with("bsi::")
+                    || k.split_once('.')
+                        .is_some_and(|(set, _)| class_sets.contains(&set))
+            })
+            .collect();
     let qto_formulas = merge_named_flat(ifc_in.get("quantities"), class_ifc.get("quantities"));
     let mut quantities = Map::new();
     for set in ifc.sets.get(class).into_iter().flatten() {
@@ -421,7 +438,7 @@ mod tests {
         );
         s.classes.insert("IfcBoiler".into(), json!({"archetype": "point", "name": "Boiler", "description": "A boiler.", "default_type": "WATER",
             "parameters": {"width": {"default": 0.45}, "symbol": {"type": "text", "default": "BLR", "label": "S", "group": "Plan"}},
-            "ifc": {"properties": {"Pset_BoilerTypeCommon.Capacity": "1"}}}));
+            "ifc": {"properties": {"Pset_BoilerTypeCommon.Capacity": "1", "Pset_WallCommon.IsExternal": "true"}}}));
         let ifc = IfcData::from_json(
             &json!([[4, "IfcBoiler", false, ["STEAM", "WATER"]]]),
             &json!({"IfcBoiler": [
@@ -480,6 +497,12 @@ mod tests {
             json!({"values": {"Width": "width"}, "from_geometry": ["GrossWeight"]})
         );
         assert!(lib.references.contains_key("ifc-4.3-add2-ifcboiler"));
+        assert!(
+            src["ifc"]["properties"]
+                .get("Pset_WallCommon.IsExternal")
+                .is_none(),
+            "IfcBoiler has no Pset_WallCommon"
+        );
     }
 
     #[test]
