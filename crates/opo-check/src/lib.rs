@@ -123,6 +123,9 @@ pub struct Report {
     pub cases: usize,
     /// Number of cases whose mesh volume was compared with `GrossVolume`.
     pub volume_checks: usize,
+    /// Values marked `to_verify` in `opo::provenance` (`file: node: path`); not errors, but
+    /// they block a stable release (decision 0017).
+    pub to_verify: Vec<String>,
 }
 
 impl Report {
@@ -187,6 +190,7 @@ pub fn check_dir(dir: &Path, opts: &Options) -> Report {
     r.object = def.object.id.clone();
 
     structure(&docs, &comp, &obj.layers, &def, &mut r.errors);
+    r.to_verify = to_verify(&docs);
     names(&def, &mut r.errors);
     if let Some(t) = opts.ifc {
         ifc_names(&def, t, &mut r.errors);
@@ -218,6 +222,21 @@ fn structure(
                 } else if let Err(e) = parse_attribute(k, v) {
                     errs.push(format!("{rel}: {k} on {}: {e}", n.path));
                 }
+                if k == "opo::provenance" {
+                    if let Ok(p) = serde_json::from_value::<opo_model::Provenance>(v.clone()) {
+                        for e in opo_model::check_provenance(&p) {
+                            errs.push(format!("{rel}: {} on {}: {e}", k, n.path));
+                        }
+                        for path in p.keys() {
+                            if provenance_target(comp, &n.path, path).is_none() {
+                                errs.push(format!(
+                                    "{rel}: provenance '{path}' on {} names no value",
+                                    n.path
+                                ));
+                            }
+                        }
+                    }
+                }
                 if k == "opo::ruleset" {
                     if let Ok(node) = serde_json::from_value::<RuleSetNode>(v.clone()) {
                         errs.extend(
@@ -244,6 +263,46 @@ fn structure(
     }
 }
 
+/// The value a provenance path names on a node: `<attribute>.<key>…` where the first part is
+/// the attribute without `opo::`, objects are entered by key and lists by the `name` or `id`
+/// of an element.
+fn provenance_target<'a>(comp: &'a Composition, node: &str, path: &str) -> Option<&'a Json> {
+    let mut parts = path.split('.');
+    let attrs = &comp.node(node)?.attributes;
+    let mut v = attrs.get(&format!("opo::{}", parts.next()?))?;
+    for p in parts {
+        v = match v {
+            Json::Object(m) => m.get(p)?,
+            Json::Array(a) => a.iter().find(|e| {
+                e.get("name").and_then(Json::as_str) == Some(p)
+                    || e.get("id").and_then(Json::as_str) == Some(p)
+            })?,
+            _ => return None,
+        };
+    }
+    Some(v)
+}
+
+/// Every `to_verify` entry of `opo::provenance` in the documents.
+fn to_verify(docs: &[(String, &Document)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (rel, d) in docs {
+        for n in &d.data {
+            let Some(v) = n.attributes.as_ref().and_then(|a| a.get("opo::provenance")) else {
+                continue;
+            };
+            if let Ok(p) = serde_json::from_value::<opo_model::Provenance>(v.clone()) {
+                for (path, e) in p {
+                    if e.status == opo_model::ProvenanceStatus::ToVerify {
+                        out.push(format!("{rel}: {}: {path}", n.path));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn parse_attribute(name: &str, v: &Json) -> Result<(), String> {
     fn p<T: serde::de::DeserializeOwned>(v: &Json) -> Result<(), String> {
         serde_json::from_value::<T>(v.clone())
@@ -268,6 +327,7 @@ fn parse_attribute(name: &str, v: &Json) -> Result<(), String> {
         "opo::representation" | "opo::note" => p::<String>(v),
         "opo::line_class" => p::<m::LineClass>(v),
         "opo::ruleset" => p::<m::RuleSetNode>(v),
+        "opo::provenance" => p::<m::Provenance>(v),
         _ => Ok(()),
     }
 }

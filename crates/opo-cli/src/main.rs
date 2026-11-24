@@ -113,12 +113,17 @@ fn check(args: &[String]) -> Result<bool, String> {
         } else {
             String::new()
         };
+        let verify = if r.to_verify.is_empty() {
+            String::new()
+        } else {
+            format!(" ({} values to verify)", r.to_verify.len())
+        };
         if r.ok() {
-            println!("{name:<20} {:>3} cases{vols}: OK", r.cases);
+            println!("{name:<20} {:>3} cases{vols}: OK{verify}", r.cases);
         } else {
             all_ok = false;
             println!(
-                "{name:<20} {:>3} cases{vols}: {} problem(s)",
+                "{name:<20} {:>3} cases{vols}: {} problem(s){verify}",
                 r.cases,
                 r.errors.len()
             );
