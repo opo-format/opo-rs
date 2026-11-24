@@ -2,7 +2,7 @@
 
 Rust reference implementation and command-line tool for the [OPO format](https://github.com/opo-format/opo) (Open Parametric Object).
 
-> Status: phase 3 of [opo/docs/migration.md](https://github.com/opo-format/opo/blob/main/docs/migration.md). `opo-feel` is done; the other crates follow.
+> Status: phase 3 of [opo/docs/migration.md](https://github.com/opo-format/opo/blob/main/docs/migration.md). `opo-feel`, `opo-model` and `opo-ifcx` are done; the geometry engine (`opo-recipe`) is next.
 
 Planned crates:
 
