@@ -257,3 +257,48 @@ fn compare_folders() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stdout).contains("type node id"));
 }
+
+#[test]
+fn ifc_from_uml() {
+    let dir = std::env::temp_dir().join(format!("opo-cli-ifc-{}", std::process::id()));
+    let (src, out) = (dir.join("schemas"), dir.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    // No .uml files: a usage error.
+    let r = opo().args(["ifc"]).arg(&src).output().unwrap();
+    assert_eq!(r.status.code(), Some(2));
+    std::fs::write(
+        src.join("a.uml"),
+        r#"<?xml version="1.0"?>
+<uml:Model xmlns:xmi="http://www.omg.org/spec/XMI/20131001" xmlns:uml="http://www.eclipse.org/uml2/5.0.0/UML" xmi:id="m" name="m">
+  <packagedElement xmi:type="uml:Class" xmi:id="cl_IfcElement" name="IfcElement" isAbstract="true"/>
+  <packagedElement xmi:type="uml:Class" xmi:id="cl_IfcBox" name="IfcBox">
+    <generalization xmi:type="uml:Generalization" xmi:id="g" general="cl_IfcElement"/>
+  </packagedElement>
+  <packagedElement xmi:type="uml:Class" xmi:id="cl_Pset_BoxCommon" name="Pset_BoxCommon">
+    <ownedAttribute xmi:type="uml:Property" xmi:id="p" name="Label">
+      <type xmi:type="uml:DataType" href="m.uml#dt_IfcLabel"/>
+    </ownedAttribute>
+  </packagedElement>
+  <packagedElement xmi:type="uml:Dependency" xmi:id="d" client="cl_Pset_BoxCommon" supplier="cl_IfcBox"/>
+</uml:Model>
+"#,
+    )
+    .unwrap();
+    let r = opo()
+        .arg("ifc")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let read = |f: &str| -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(out.join(f)).unwrap()).unwrap()
+    };
+    assert_eq!(read("elements.json")[1][1], "IfcBox");
+    assert_eq!(
+        read("psets.json")["IfcBox"][0]["props"][0]["measure"],
+        "IfcLabel"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

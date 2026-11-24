@@ -16,7 +16,8 @@ Usage:
   opo unpack FILE [-o FOLDER]
   opo build SOURCE... --library ROOT [--base PATH] [-o OUT] [--timestamp DATE] [--package]
   opo export FOLDER --base PATH --library ROOT -o SOURCE
-  opo generate --library ROOT [-o OUT] [--timestamp DATE] [CLASS...]
+  opo generate --library ROOT [--ifc DIR] [-o OUT] [--timestamp DATE] [CLASS...]
+  opo ifc UML_DIR [-o OUT]
   opo compare FOLDER_A FOLDER_B [--ignore-generator]
   opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
@@ -37,8 +38,12 @@ Commands:
           merged into the library's references.yaml and styles/.
   generate
           Generate class templates from <ROOT>/templates/archetypes/*.yaml,
-          <ROOT>/templates/classes.yaml and the IFC data in <ROOT>/ifc/, then build them
+          <ROOT>/templates/classes.yaml and the IFC data in DIR (elements.json and
+          psets.json, as written by 'opo ifc'; default <ROOT>/ifc), then build them
           like 'opo build' into <OUT>/library/templates/<Class> (default: every class).
+  ifc     Read the IFC 4.3 element classes and property set templates from
+          buildingSMART's UML sources (schemas/*.uml of IFC4.x-development) and write
+          OUT/elements.json and OUT/psets.json (default OUT: .).
   compare Compare two object folders (type node attributes, parameter order, baked
           parts, layer nodes); exit 1 on any difference.
   render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
@@ -469,12 +474,14 @@ fn generate(args: &[String]) -> Result<bool, String> {
         today(),
         Vec::<String>::new(),
     );
+    let mut ifc_dir = None::<PathBuf>;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
         match arg.as_str() {
             "--library" => library = Some(next("a folder")?.into()),
             "-o" => out = Some(next("a folder")?.into()),
+            "--ifc" => ifc_dir = Some(next("a folder")?.into()),
             "--timestamp" => timestamp = next("a date")?,
             s if s.starts_with('-') => return Err(format!("unknown option {s}")),
             s => only.push(s.into()),
@@ -484,7 +491,8 @@ fn generate(args: &[String]) -> Result<bool, String> {
     let out = out.unwrap_or_else(|| library.join("build"));
     let mut lib = opo_source::Library::load(&library).map_err(|e| e.to_string())?;
     let sources = opo_source::TemplateSources::load(&library).map_err(|e| e.to_string())?;
-    let ifc = opo_source::IfcData::load(&library.join("ifc")).map_err(|e| e.to_string())?;
+    let ifc_dir = ifc_dir.unwrap_or_else(|| library.join("ifc"));
+    let ifc = opo_source::IfcData::load(&ifc_dir).map_err(|e| e.to_string())?;
     let resolver = DirResolver {
         prefix: "opo-format.org/".into(),
         root: out.clone(),
@@ -551,6 +559,43 @@ fn compare(args: &[String]) -> Result<bool, String> {
     Ok(diffs.is_empty())
 }
 
+/// `opo ifc UML_DIR [-o OUT]`: write elements.json and psets.json from the IFC UML sources.
+fn ifc(args: &[String]) -> Result<bool, String> {
+    let (mut dir, mut out) = (None::<PathBuf>, PathBuf::from("."));
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "-o" => out = it.next().ok_or("-o needs a folder")?.into(),
+            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s if dir.is_none() => dir = Some(s.into()),
+            s => return Err(format!("unexpected argument {s}")),
+        }
+    }
+    let dir = dir.ok_or("ifc needs the folder of the .uml files")?;
+    let (elements, psets) = opo_source::extract_ifc_uml(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    for (name, v) in [("elements.json", &elements), ("psets.json", &psets)] {
+        let p = out.join(name);
+        std::fs::write(
+            &p,
+            serde_json::to_string(v).map_err(|e| e.to_string())? + "\n",
+        )
+        .map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    let sets: usize = psets.as_object().map_or(0, |m| {
+        m.values()
+            .filter_map(serde_json::Value::as_array)
+            .map(Vec::len)
+            .sum()
+    });
+    println!(
+        "{} classes, {sets} property and quantity sets → {}",
+        elements.as_array().map_or(0, Vec::len),
+        out.display()
+    );
+    Ok(true)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -567,6 +612,7 @@ fn main() -> ExitCode {
         Some("export") => export(&args[1..]),
         Some("generate") => generate(&args[1..]),
         Some("compare") => compare(&args[1..]),
+        Some("ifc") => ifc(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'")),
     };
     match result {
