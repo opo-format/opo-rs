@@ -14,6 +14,8 @@ Usage:
   opo bake [--root DIR] [--base PATH] FOLDER...
   opo pack FOLDER [-o FILE]
   opo unpack FILE [-o FOLDER]
+  opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
+             [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
 
 Commands:
   check   Validate unpacked object folders (object.ifcx + layers/): schema, names,
@@ -22,6 +24,8 @@ Commands:
           geometry in its object.ifcx (meshes, plan curves, void).
   pack    Write the .opo package of an object folder (default: <folder>.opo).
   unpack  Extract a .opo package (default: a folder named after the file).
+  render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
+          shaded 3D view (model.medium). Values and inputs are JSON objects.
 
 Options:
   --root DIR   Folder that object ids 'opo-format.org/<path>' resolve under (default: .)
@@ -205,6 +209,71 @@ fn unpack(args: &[String]) -> Result<bool, String> {
     Ok(true)
 }
 
+fn render(args: &[String]) -> Result<bool, String> {
+    let (mut root, mut view, mut rep, mut scale) =
+        (PathBuf::from("."), "plan".to_owned(), None::<String>, 50.0);
+    let (mut values, mut inputs, mut out, mut folder) = (
+        None::<String>,
+        None::<String>,
+        None::<PathBuf>,
+        None::<PathBuf>,
+    );
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
+        match arg.as_str() {
+            "--root" => root = next("a folder")?.into(),
+            "--view" => view = next("plan or model")?,
+            "--representation" => rep = Some(next("an id")?),
+            "--scale" => {
+                scale = next("a number")?
+                    .parse()
+                    .map_err(|_| "--scale needs a number".to_owned())?
+            }
+            "--values" => values = Some(next("a JSON object")?),
+            "--inputs" => inputs = Some(next("a JSON object")?),
+            "-o" => out = Some(next("a file")?.into()),
+            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s if folder.is_none() => folder = Some(s.into()),
+            s => return Err(format!("unexpected argument {s}")),
+        }
+    }
+    let folder = folder.ok_or("render needs an object folder")?;
+    let json_map = |s: Option<String>,
+                    what: &str|
+     -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        match s {
+            None => Ok(Default::default()),
+            Some(s) => match serde_json::from_str(&s) {
+                Ok(serde_json::Value::Object(m)) => Ok(m),
+                _ => Err(format!("{what} must be a JSON object")),
+            },
+        }
+    };
+    let input = opo_recipe::Input {
+        values: json_map(values, "--values")?,
+        inputs: json_map(inputs, "--inputs")?,
+        ..Default::default()
+    };
+    let def = opo_check::load_type(&folder)?;
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root,
+    };
+    let ev = opo_recipe::run(&def, &input, &resolver).map_err(|e| e.to_string())?;
+    let svg = match view.as_str() {
+        "plan" => opo_render::plan_svg(&def, &ev, rep.as_deref().unwrap_or("plan.medium"), scale),
+        "model" => opo_render::model_svg(&def, &ev, rep.as_deref().unwrap_or("model.medium")),
+        other => return Err(format!("--view must be plan or model, not {other}")),
+    }
+    .map_err(|e| e.to_string())?;
+    match out {
+        Some(f) => std::fs::write(&f, svg).map_err(|e| format!("{}: {e}", f.display()))?,
+        None => print!("{svg}"),
+    }
+    Ok(true)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -216,6 +285,7 @@ fn main() -> ExitCode {
         Some("bake") => bake(&args[1..]),
         Some("pack") => pack(&args[1..]),
         Some("unpack") => unpack(&args[1..]),
+        Some("render") => render(&args[1..]),
         Some(other) => Err(format!("unknown command '{other}'")),
     };
     match result {

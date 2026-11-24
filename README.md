@@ -2,7 +2,7 @@
 
 Rust reference implementation and command-line tool for the [OPO format](https://github.com/opo-format/opo) (Open Parametric Object).
 
-> Status: phase 3 of [opo/docs/migration.md](https://github.com/opo-format/opo/blob/main/docs/migration.md). `opo-feel`, `opo-model`, `opo-ifcx` and `opo-recipe` pass the conformance suite; `opo-check` and the `opo check` command work; `opo-build` and `opo-render` are next.
+> Status: phase 3 of [opo/docs/migration.md](https://github.com/opo-format/opo/blob/main/docs/migration.md). `opo-feel`, `opo-model`, `opo-ifcx` and `opo-recipe` pass the conformance suite; `opo check`, `opo bake`, `opo pack`, `opo unpack` and `opo render` work; the class template generator is next.
 
 Planned crates:
 

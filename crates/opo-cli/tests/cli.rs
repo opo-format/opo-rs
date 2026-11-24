@@ -123,3 +123,57 @@ fn bake_pack_unpack_check() {
         Some(2)
     );
 }
+
+#[test]
+fn render_plan_and_model() {
+    let spec = spec_dir();
+    let wall = spec.join("library/templates/IfcWall");
+    let out = opo()
+        .args(["render", "--root"])
+        .arg(&spec)
+        .arg(&wall)
+        .args([
+            "--scale",
+            "20",
+            "--inputs",
+            "{\"path\": [[0, 0], [1.2, 0]]}",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("<clipPath"));
+    let out = opo()
+        .args(["render", "--root"])
+        .arg(&spec)
+        .arg(&wall)
+        .args(["--view", "model"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("<polygon"));
+    assert_eq!(
+        opo()
+            .args(["render"])
+            .arg(&wall)
+            .args(["--view", "side"])
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_eq!(
+        opo()
+            .args(["render"])
+            .arg(&wall)
+            .args(["--values", "[1]"])
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2)
+    );
+}
