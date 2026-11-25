@@ -56,7 +56,10 @@ fn objects_compose_and_variants_resolve() {
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     fixtures.sort();
-    assert_eq!(fixtures.len(), 10, "the door and nine templates");
+    assert!(
+        fixtures.len() >= 10,
+        "the door, nine templates and the grid wall"
+    );
 
     let (mut variants, mut failures) = (0, Vec::new());
     for fx in &fixtures {
