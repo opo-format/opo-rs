@@ -171,3 +171,62 @@ fn export_compile_round_trip() {
     );
     let _ = Path::new(&tmp);
 }
+
+#[test]
+fn finished_objects_leave_out_unverified_rule_sets() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: spec.clone(),
+    };
+    let base = "examples/door/single-swing-door";
+    let tmp = std::env::temp_dir().join(format!("opo-unverified-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let ex = export_dir(&spec.join(base), base).unwrap();
+    ex.write(&tmp.join(base)).unwrap();
+    ex.library.save(&tmp).unwrap();
+    let lib = Library::load(&tmp).unwrap();
+    // Mark one value of the ISO rule set as not yet checked.
+    let layer = tmp.join(base).join("layers/ruleset-iso-21542.yaml");
+    let mut l =
+        opo_source::yaml::parse(&std::fs::read_to_string(&layer).unwrap(), "layer").unwrap();
+    let values = l["values"].as_object_mut().unwrap();
+    let first = values.keys().next().unwrap().clone();
+    let v = values[&first].clone();
+    values.insert(
+        first,
+        serde_json::json!({"value": v, "source": "x", "status": "to_verify", "note": "check"}),
+    );
+    std::fs::write(&layer, opo_source::yaml::write(&l)).unwrap();
+
+    let build = |status: &str| {
+        let obj = tmp.join(base).join("object.yaml");
+        let mut o =
+            opo_source::yaml::parse(&std::fs::read_to_string(&obj).unwrap(), "object").unwrap();
+        o["status"] = Json::String(status.into());
+        std::fs::write(&obj, opo_source::yaml::write(&o)).unwrap();
+        compile_dir(&tmp.join(base), &lib, base, &resolver, "2026-11-25").unwrap()
+    };
+    let draft = build("draft");
+    assert!(draft.skipped.is_empty());
+    assert!(
+        draft
+            .layers
+            .iter()
+            .any(|(f, _)| f == "ruleset-iso-21542.ifcx")
+    );
+    let stable = build("stable");
+    assert_eq!(stable.skipped, ["ruleset-iso-21542"]);
+    assert!(
+        !stable
+            .layers
+            .iter()
+            .any(|(f, _)| f == "ruleset-iso-21542.ifcx")
+    );
+    assert!(
+        stable
+            .layers
+            .iter()
+            .any(|(f, _)| f == "ruleset-us-ada.ifcx")
+    );
+}

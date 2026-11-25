@@ -26,6 +26,21 @@ pub struct Compiled {
     pub base: Document,
     /// `layers/<name>.ifcx`, in source order, with their file names.
     pub layers: Vec<(String, Document)>,
+    /// Rule-set layers left out because they still have `to_verify` values and the object is
+    /// in `review` or `stable` (decision 0017).
+    pub skipped: Vec<String>,
+}
+
+/// True if a rule-set layer source still has a value marked `to_verify`.
+fn unverified(layer: &Json) -> bool {
+    layer.get("kind").and_then(Json::as_str) == Some("ruleset")
+        && layer
+            .get("values")
+            .and_then(Json::as_object)
+            .is_some_and(|v| {
+                v.values()
+                    .any(|x| x.get("status").and_then(Json::as_str) == Some("to_verify"))
+            })
 }
 
 fn err(msg: impl Into<String>) -> Error {
@@ -434,13 +449,26 @@ pub fn compile(
     timestamp: &str,
 ) -> Result<Compiled, Error> {
     let shared = shared_rulesets(object, layers, lib);
-    let with_shared: Vec<(String, Json)>;
-    let layers: &[(String, Json)] = if shared.is_empty() {
-        layers
-    } else {
-        with_shared = layers.iter().cloned().chain(shared).collect();
-        &with_shared
-    };
+    // A finished object (review or stable) ships no rule set with unverified values: those
+    // variants are left out until every value is checked.
+    let finished = matches!(
+        object.get("status").and_then(Json::as_str),
+        Some("review" | "stable")
+    );
+    let mut skipped = Vec::new();
+    let with_shared: Vec<(String, Json)> = layers
+        .iter()
+        .cloned()
+        .chain(shared)
+        .filter(|(name, l)| {
+            let skip = finished && unverified(l);
+            if skip {
+                skipped.push(name.clone());
+            }
+            !skip
+        })
+        .collect();
+    let layers: &[(String, Json)] = &with_shared;
     let mut src = object
         .as_object()
         .cloned()
@@ -602,6 +630,7 @@ pub fn compile(
     Ok(Compiled {
         base: base_doc,
         layers: out,
+        skipped,
     })
 }
 
