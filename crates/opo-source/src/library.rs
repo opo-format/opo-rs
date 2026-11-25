@@ -13,6 +13,9 @@ pub struct Library {
     pub materials: Map<String, Json>,
     /// `styles/hatches.yaml`: id → `opo::hatches` entry.
     pub hatches: Map<String, Json>,
+    /// `rulesets/<id>/<variant>.yaml`: shared rule-set variants by rule-set id, in file-name
+    /// order (proposal 0002, Resolved). Read-only: `save` and `merge` leave them alone.
+    pub rulesets: std::collections::BTreeMap<String, Vec<(String, Json)>>,
 }
 
 fn as_map(v: Option<Json>, what: &Path) -> Result<Map<String, Json>, Error> {
@@ -24,6 +27,59 @@ fn as_map(v: Option<Json>, what: &Path) -> Result<Map<String, Json>, Error> {
             what.display()
         ))),
     }
+}
+
+/// Shared rule sets: `<dir>/<id>/<variant>.yaml`, each a layer source of kind `ruleset` whose
+/// `id` is its folder name and which has no `node`.
+fn read_rulesets(
+    dir: &Path,
+) -> Result<std::collections::BTreeMap<String, Vec<(String, Json)>>, Error> {
+    let mut out = std::collections::BTreeMap::new();
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    let list = |d: &Path| -> Result<Vec<PathBuf>, Error> {
+        let mut v: Vec<PathBuf> = std::fs::read_dir(d)
+            .map_err(|e| Error::Io(d.to_owned(), e))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .collect();
+        v.sort();
+        Ok(v)
+    };
+    for idir in list(dir)?.into_iter().filter(|p| p.is_dir()) {
+        let id = idir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let mut variants = Vec::new();
+        for f in list(&idir)?
+            .into_iter()
+            .filter(|p| p.extension().is_some_and(|x| x == "yaml"))
+        {
+            let v = read_yaml(&f)?.unwrap_or(Json::Null);
+            let bad = |m: &str| Error::Source(format!("{}: {m}", f.display()));
+            if v.get("kind").and_then(Json::as_str) != Some("ruleset") {
+                return Err(bad("a shared rule set has kind ruleset"));
+            }
+            if v.get("id").and_then(Json::as_str) != Some(id.as_str()) {
+                return Err(bad("its id must be the folder name"));
+            }
+            if v.get("node").is_some() {
+                return Err(bad(
+                    "a shared rule set has no node (ids are made per object)",
+                ));
+            }
+            let variant = f
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            variants.push((variant, v));
+        }
+        out.insert(id, variants);
+    }
+    Ok(out)
 }
 
 impl Library {
@@ -43,6 +99,7 @@ impl Library {
             references: as_map(read_yaml(&r)?, &r)?,
             materials: as_map(read_yaml(&m)?, &m)?,
             hatches: as_map(read_yaml(&h)?, &h)?,
+            rulesets: read_rulesets(&root.join("rulesets"))?,
         })
     }
 
@@ -131,5 +188,38 @@ mod tests {
             Library::load(&dir.join("missing")).unwrap(),
             Library::default()
         );
+    }
+}
+
+#[cfg(test)]
+mod ruleset_tests {
+    use super::*;
+
+    #[test]
+    fn shared_rulesets_load_and_are_checked() {
+        let root = std::env::temp_dir().join(format!("opo-lib-rulesets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let d = root.join("rulesets/stairs");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("uk.yaml"),
+            "kind: \"ruleset\"\nid: \"stairs\"\nsource: \"s\"\nvalues:\n  riser_max: \"0.22\"\n",
+        )
+        .unwrap();
+        let lib = Library::load(&root).unwrap();
+        assert_eq!(lib.rulesets["stairs"][0].0, "uk");
+        std::fs::write(
+            d.join("us.yaml"),
+            "kind: \"ruleset\"\nid: \"guards\"\nsource: \"s\"\nvalues: {}\n",
+        )
+        .unwrap();
+        assert!(Library::load(&root).is_err());
+        std::fs::write(
+            d.join("us.yaml"),
+            "kind: \"ruleset\"\nid: \"stairs\"\nnode: \"x\"\nsource: \"s\"\nvalues: {}\n",
+        )
+        .unwrap();
+        assert!(Library::load(&root).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
