@@ -384,6 +384,12 @@ fn build(args: &[String]) -> Result<bool, String> {
         }
         let built = opo_source::compile_dir(src, &lib, &base, &resolver, &timestamp)
             .map_err(|e| format!("{}: {e}", src.display()))?;
+        for s in &built.skipped {
+            println!(
+                "{}: rule set {s} left out (values still to verify)",
+                src.display()
+            );
+        }
         let mut doc = built.base;
         let r = opo_build::bake(&mut doc, &resolver, &base)
             .map_err(|e| format!("{}: {e}", src.display()))?;
