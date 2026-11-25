@@ -698,7 +698,33 @@ impl Grid {
         let mut trims = Vec::new();
         for sg in &self.segments {
             if sg.direction == continuous {
-                trims.push((0.0, 0.0));
+                // A continuous member runs on past a border line by half the width of the
+                // border member it meets, so the frame's outer corners are square.
+                let ext = |node: usize| {
+                    let (border, ids) = if sg.direction == "v" {
+                        (
+                            self.vlines[node].cls == "border",
+                            [
+                                format!("h{node}.{}", sg.line),
+                                format!("h{node}.{}", sg.line.wrapping_sub(1)),
+                            ],
+                        )
+                    } else {
+                        (
+                            self.ulines[node].cls == "border",
+                            [
+                                format!("v{node}.{}", sg.line),
+                                format!("v{node}.{}", sg.line.wrapping_sub(1)),
+                            ],
+                        )
+                    };
+                    if border {
+                        -ids.iter().find_map(|i| width_of(i)).unwrap_or(0.0) / 2.0
+                    } else {
+                        0.0
+                    }
+                };
+                trims.push((ext(sg.bay), ext(sg.bay + 1)));
                 continue;
             }
             // The continuous member through each end node: on the same line, on either side.
@@ -904,10 +930,9 @@ mod tests {
             "boundary mullion at the start"
         );
         let v = g.segments.iter().find(|s| s.id == "v1.0").unwrap();
-        assert_eq!(
-            (v.trim_start, v.trim_end),
-            (0.0, 0.0),
-            "mullions run through"
+        assert!(
+            (v.trim_start + 0.04).abs() < 1e-12 && (v.trim_end + 0.04).abs() < 1e-12,
+            "a one-row mullion runs past the top and bottom border by half the boundary width"
         );
         let c = g.cells.iter().find(|c| c.id == "c1.0").unwrap();
         assert_eq!(c.panel.unwrap().1, [0.04, 0.03, 0.04, 0.03]);
