@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use opo_check::{DirResolver, load_type};
 use opo_recipe::{Input, run};
-use opo_render::{model_svg, plan_svg, solid_colour};
+use opo_render::{elevation_svg, model_svg, plan_svg, solid_colour};
 
 fn spec_dir() -> PathBuf {
     std::env::var_os("OPO_SPEC_DIR")
@@ -139,4 +139,24 @@ fn nested_objects_keep_their_material_colours() {
         "#bcd4dc",
         "glass, from the panel object"
     );
+}
+
+#[test]
+fn door_elevation_has_the_model_and_its_lines() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: spec.clone(),
+    };
+    let def = load_type(&spec.join("examples/door/single-swing-door")).unwrap();
+    let ev = run(&def, &Input::default(), &resolver).unwrap();
+    let bare = elevation_svg(&def, &ev, "model.medium", None, 50.0).unwrap();
+    assert!(balanced(&bare) && bare.contains("<image"), "front view");
+    let drawn = elevation_svg(&def, &ev, "model.medium", Some("elevation.medium"), 50.0).unwrap();
+    assert!(balanced(&drawn) && drawn.contains("<image"));
+    assert!(
+        drawn.len() > bare.len(),
+        "the elevation lines are drawn over it"
+    );
+    assert!(elevation_svg(&def, &ev, "model.medium", Some("elevation.none"), 50.0).is_err());
 }
