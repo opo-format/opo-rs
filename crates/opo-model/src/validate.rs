@@ -120,11 +120,34 @@ impl TypeDefinition {
                     })
                 }
                 ParameterType::PropertySet => d.is_object(),
+                // An object id, or null for a class map (its classes give the objects).
+                ParameterType::Component => d.is_string() || (d.is_null() && p.classes.is_some()),
             };
             if !type_ok {
                 issue(
                     at.clone(),
                     format!("default does not fit type {:?}", p.kind),
+                );
+            }
+            if p.kind == ParameterType::Component {
+                if p.interface.is_none() {
+                    issue(
+                        at.clone(),
+                        "a component parameter names its interface".into(),
+                    );
+                }
+                if let Some(c) = &p.classes {
+                    if !c.contains_key("default") || !c.values().all(Json::is_string) {
+                        issue(
+                            at.clone(),
+                            "a class map has object ids, one of them for `default`".into(),
+                        );
+                    }
+                }
+            } else if p.interface.is_some() || p.allowed.is_some() || p.classes.is_some() {
+                issue(
+                    at.clone(),
+                    "interface, allowed and classes are for component parameters".into(),
                 );
             }
             if p.kind == ParameterType::Choice {
@@ -277,6 +300,37 @@ impl TypeDefinition {
             for c in h.colour.iter().chain(h.background.iter()) {
                 if !is_colour(c) {
                     issue(at.clone(), "colours must be #rrggbb".into());
+                }
+            }
+        }
+
+        if let Some(i) = &self.interface {
+            let at = "opo::interface".to_string();
+            let derived: HashSet<&str> = self.derived().iter().map(|d| d.name.as_str()).collect();
+            for r in &i.reports {
+                if !derived.contains(r.as_str()) {
+                    issue(
+                        at.clone(),
+                        format!("reported value '{r}' is not a derived value"),
+                    );
+                }
+            }
+            if let Some((inputs, reports)) = Interface::standard(&i.name) {
+                for x in inputs {
+                    if !i.inputs.iter().any(|y| y == x) {
+                        issue(
+                            at.clone(),
+                            format!("the {} interface has input '{x}'", i.name),
+                        );
+                    }
+                }
+                for x in reports {
+                    if !i.reports.iter().any(|y| y == x) {
+                        issue(
+                            at.clone(),
+                            format!("the {} interface reports '{x}'", i.name),
+                        );
+                    }
                 }
             }
         }

@@ -7,7 +7,7 @@ use serde_json::{Map, Value as Json};
 use crate::attributes::*;
 
 /// Every `opo::` attribute declared by schema 0.1 (`schema/opo@v0.1.ifcx`).
-pub const ATTRIBUTE_NAMES: [&str; 19] = [
+pub const ATTRIBUTE_NAMES: [&str; 20] = [
     "opo::object",
     "opo::parameters",
     "opo::slots",
@@ -27,6 +27,7 @@ pub const ATTRIBUTE_NAMES: [&str; 19] = [
     "opo::note",
     "opo::ruleset",
     "opo::provenance",
+    "opo::interface",
 ];
 
 /// An attribute that does not match its schema.
@@ -72,6 +73,8 @@ pub struct TypeDefinition {
     pub hatches: Option<Vec<(String, Hatch)>>,
     /// `opo::ports`.
     pub ports: Option<Vec<Port>>,
+    /// `opo::interface` (objects that fill component slots).
+    pub interface: Option<Interface>,
     /// `opo::ifc`.
     pub ifc: Ifc,
 }
@@ -156,6 +159,7 @@ impl TypeDefinition {
             materials: read_map(attrs, "opo::materials")?,
             hatches: read_map(attrs, "opo::hatches")?,
             ports: read(attrs, "opo::ports")?,
+            interface: read(attrs, "opo::interface")?,
             ifc: required(attrs, "opo::ifc")?,
         })
     }
@@ -188,6 +192,9 @@ impl TypeDefinition {
         }
         if let Some(v) = &self.ports {
             write(&mut a, "opo::ports", v);
+        }
+        if let Some(v) = &self.interface {
+            write(&mut a, "opo::interface", v);
         }
         write(&mut a, "opo::ifc", &self.ifc);
         a
@@ -444,6 +451,34 @@ mod tests {
             json!({"rulesets": [{"id": "stairs", "values": {}}]}),
         );
         assert!(TypeDefinition::from_attributes(&a).is_err());
+    }
+
+    #[test]
+    fn component_parameters_and_interfaces_are_checked() {
+        let v = issues(|a| {
+            a["opo::parameters"].as_array_mut().unwrap().push(json!(
+                {"name": "mullion", "type": "component", "default": "x/m", "label": "M", "group": "G"}));
+        });
+        assert!(v.iter().any(|i| i.contains("names its interface")), "{v:?}");
+        let v = issues(|a| {
+            a["opo::parameters"].as_array_mut().unwrap().push(json!(
+                {"name": "panels", "type": "component", "interface": "panel", "default": null,
+                 "label": "P", "group": "G", "classes": {"main": "x/p"}}));
+        });
+        assert!(v.iter().any(|i| i.contains("`default`")), "{v:?}");
+        let v = issues(|a| {
+            a.insert(
+                "opo::interface".into(),
+                json!({"name": "frame", "inputs": ["path"], "reports": ["face_width"]}),
+            );
+        });
+        assert!(v.iter().any(|i| i.contains("input 'normal'")), "{v:?}");
+        assert!(v.iter().any(|i| i.contains("reports 'depth'")), "{v:?}");
+        assert!(
+            v.iter()
+                .any(|i| i.contains("'face_width' is not a derived value")),
+            "{v:?}"
+        );
     }
 
     #[test]

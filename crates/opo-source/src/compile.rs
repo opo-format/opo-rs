@@ -561,6 +561,9 @@ pub fn compile(
     if let Some(v) = src.get("ports") {
         a.insert("opo::ports".into(), v.clone());
     }
+    if let Some(v) = src.get("interface") {
+        a.insert("opo::interface".into(), v.clone());
+    }
 
     let def = TypeDefinition::from_attributes(&a).map_err(|e| {
         err(format!(
