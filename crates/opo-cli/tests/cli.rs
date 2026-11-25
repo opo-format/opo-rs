@@ -153,7 +153,7 @@ fn render_plan_and_model() {
         .args(["--view", "model"])
         .output()
         .unwrap();
-    assert!(String::from_utf8_lossy(&out.stdout).contains("<polygon"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("<image"));
     assert_eq!(
         opo()
             .args(["render"])

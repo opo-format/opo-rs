@@ -44,7 +44,7 @@ fn every_template_draws() {
             plan.contains("<path") || plan.contains("<polyline"),
             "{name}: empty plan"
         );
-        assert!(model.contains("<polygon"), "{name}: empty model");
+        assert!(model.contains("<image"), "{name}: empty model");
         // Deterministic.
         assert_eq!(plan, plan_svg(&def, &ev, "plan.medium", 50.0).unwrap());
     }
@@ -85,7 +85,7 @@ fn door_plan_and_model() {
     assert!(
         model_svg(&def, &ev, "model.high")
             .unwrap()
-            .contains("<polygon")
+            .contains("<image")
     );
 }
 
@@ -110,9 +110,9 @@ fn voids_are_not_drawn_in_the_model_view() {
     }
     assert!(voids > 0, "the opening has a void");
     let drawn = model_svg(&def, &ev, "model.medium").unwrap();
-    assert!(!with_void.contains("<polygon"), "the void is not drawn");
+    assert!(!with_void.contains("<image"), "the void is not drawn");
     assert!(
-        drawn.contains("<polygon"),
+        drawn.contains("<image"),
         "the same solid draws without the role"
     );
 }

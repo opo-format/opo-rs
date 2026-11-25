@@ -12,6 +12,7 @@ authors.workspace = true
 opo-feel = { path = "../opo-feel" }
 opo-model = { path = "../opo-model" }
 opo-recipe = { path = "../opo-recipe" }
+png = "0.17"
 
 [dev-dependencies]
 opo-check = { path = "../opo-check" }
