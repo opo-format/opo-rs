@@ -198,7 +198,7 @@ impl Env for StepEnv<'_> {
                     &rep,
                 )
             }
-            Op::ForEach => Err(Error::Op("for_each cannot be called inline".into())),
+            Op::ForEach | Op::Grid => Err(Error::Op(format!("{name} cannot be called inline"))),
             _ => ops::apply(op, self.plane, &args),
         };
         Some(result.map_err(|e| opo_feel::Error::Eval(e.to_string())))
@@ -297,6 +297,7 @@ impl Runner<'_> {
                     }
                     list_value(out)
                 }
+                Op::Grid => self.grid(step, &senv, &at)?,
                 Op::Instance => {
                     let object = senv.eval(arg("object").unwrap_or(&Json::Null), &at("object"))?;
                     let vals = senv.eval(
@@ -334,6 +335,84 @@ impl Runner<'_> {
             geometry.insert(step.id.clone(), value);
         }
         Ok(Evaluation { env, geometry })
+    }
+
+    /// Run a `grid` step (proposal 0001 §2): lay out, apply the class rules and the instance
+    /// overrides, then trim members and inset panels by the class widths.
+    fn grid(
+        &self,
+        step: &opo_model::RecipeStep,
+        senv: &StepEnv<'_>,
+        at: &dyn Fn(&str) -> String,
+    ) -> Result<Value, Error> {
+        let arg = |name: &str| step.args.get(name);
+        let need = |name: &str| {
+            arg(name).ok_or_else(|| Error::Op(format!("{}: missing argument '{name}'", at(""))))
+        };
+        let surface = senv.eval(need("surface")?, &at("surface"))?;
+        let u = senv.eval(need("u")?, &at("u"))?;
+        let v = senv.eval(need("v")?, &at("v"))?;
+        let mut g = crate::grid::Grid::build(&surface, &u, &v)
+            .map_err(|e| Error::Op(format!("{}: {e}", at(""))))?;
+        // Class rules are FEEL expressions over `segment` and `cell`, evaluated per member.
+        if let Some(Json::Object(rules)) = arg("classes") {
+            let class = |expr: &Json, name: &str, item: Value| -> Result<Option<String>, Error> {
+                let local = StepEnv {
+                    env: senv.env,
+                    geometry: senv.geometry,
+                    locals: vec![(name.to_string(), item)],
+                    plane: senv.plane,
+                    runner: senv.runner,
+                };
+                Ok(match local.eval(expr, &at(&format!("classes.{name}")))? {
+                    Value::String(s) => Some(s),
+                    _ => None,
+                })
+            };
+            if let Some(expr) = rules.get("segment") {
+                for k in 0..g.segments.len() {
+                    if let Some(c) = class(expr, "segment", g.segment_value(&g.segments[k]))? {
+                        g.segments[k].cls = c;
+                    }
+                }
+            }
+            if let Some(expr) = rules.get("cell") {
+                for k in 0..g.cells.len() {
+                    if let Some(c) = class(expr, "cell", g.cell_value(&g.cells[k]))? {
+                        g.cells[k].cls = c;
+                    }
+                }
+            }
+        }
+        if let Some(o) = arg("overrides") {
+            g.apply_overrides(&senv.eval(o, &at("overrides"))?);
+        }
+        let join = match arg("join") {
+            Some(j) => match senv.eval(j, &at("join"))? {
+                Value::String(s) => s,
+                Value::Null => "u_continuous".into(),
+                other => {
+                    return Err(Error::Op(format!(
+                        "{}: join is not text ({other:?})",
+                        at("")
+                    )));
+                }
+            },
+            None => "u_continuous".into(),
+        };
+        let mut widths = BTreeMap::new();
+        if let Some(w) = arg("widths") {
+            if let Value::Context(m) = senv.eval(w, &at("widths"))? {
+                for (k, x) in m {
+                    if let Some(n) = x.as_number() {
+                        widths.insert(k, n);
+                    }
+                }
+            }
+        }
+        g.finish(&join, &widths)
+            .map_err(|e| Error::Op(format!("{}: {e}", at(""))))?;
+        Ok(g.value())
     }
 
     /// Place a nested object and return the items of one of its representations.

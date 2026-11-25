@@ -547,11 +547,12 @@ pub enum Op {
     Mirror,
     ForEach,
     Instance,
+    Grid,
 }
 
 impl Op {
     /// Every operation.
-    pub const ALL: [Op; 22] = [
+    pub const ALL: [Op; 23] = [
         Op::Rectangle,
         Op::Polygon,
         Op::Circle,
@@ -574,6 +575,7 @@ impl Op {
         Op::Mirror,
         Op::ForEach,
         Op::Instance,
+        Op::Grid,
     ];
 
     /// The name used in files and in inline FEEL calls.
@@ -601,6 +603,7 @@ impl Op {
             Op::Mirror => "mirror",
             Op::ForEach => "for_each",
             Op::Instance => "instance",
+            Op::Grid => "grid",
         }
     }
 
@@ -634,6 +637,10 @@ impl Op {
             Op::Mirror => (&["geometry", "axis"], &[]),
             Op::ForEach => (&["items", "do"], &["as", "index"]),
             Op::Instance => (&["object"], &["values", "inputs", "representation"]),
+            Op::Grid => (
+                &["surface", "u", "v"],
+                &["join", "classes", "overrides", "widths"],
+            ),
         }
     }
 }

@@ -11,6 +11,7 @@
 //! 48-gon.
 
 mod geometry;
+mod grid;
 mod mesh;
 mod ops;
 mod run;
