@@ -136,6 +136,10 @@ fn merge_named(base: Option<&Json>, over: Option<&Json>) -> Option<Json> {
     let mut out = base.and_then(Json::as_object).cloned().unwrap_or_default();
     for (k, v) in over.and_then(Json::as_object).into_iter().flatten() {
         match (out.get_mut(k), v) {
+            // A null in the class entry removes the archetype's entry (as in IFCX).
+            (_, Json::Null) => {
+                out.shift_remove(k);
+            }
             (Some(Json::Object(b)), Json::Object(o)) => b.extend(o.clone()),
             _ => {
                 out.insert(k.clone(), v.clone());
@@ -408,10 +412,16 @@ pub fn generate(
     Ok((Json::Object(src), layers, lib))
 }
 
-/// Merge two flat maps; `over` wins.
+/// Merge two flat maps; `over` wins, and a null in `over` removes the key.
 fn merge_named_flat(base: Option<&Json>, over: Option<&Json>) -> Map<String, Json> {
     let mut out = base.and_then(Json::as_object).cloned().unwrap_or_default();
-    out.extend(over.and_then(Json::as_object).cloned().unwrap_or_default());
+    for (k, v) in over.and_then(Json::as_object).into_iter().flatten() {
+        if v.is_null() {
+            out.shift_remove(k);
+        } else {
+            out.insert(k.clone(), v.clone());
+        }
+    }
     out
 }
 
@@ -574,5 +584,25 @@ mod ifc_data_tests {
         assert_eq!(ifc.types["IfcFlowTerminal"], Vec::<String>::new());
         assert_eq!(ifc.types["IfcAirTerminal"], ["DIFFUSER", "GRILLE"]);
         assert!(!ifc.types.contains_key("IfcDistributionFlowElement"));
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    #[test]
+    fn null_removes_an_archetype_entry() {
+        let base = json!({"stairs": {"default": null}, "keep": {"a": 1}});
+        let over = json!({"stairs": null, "keep": {"b": 2}});
+        assert_eq!(
+            merge_named(Some(&base), Some(&over)).unwrap(),
+            json!({"keep": {"a": 1, "b": 2}})
+        );
+        let flat = merge_named_flat(
+            Some(&json!({"x": "1", "y": "2"})),
+            Some(&json!({"x": null, "z": "3"})),
+        );
+        assert_eq!(Json::Object(flat), json!({"y": "2", "z": "3"}));
     }
 }
