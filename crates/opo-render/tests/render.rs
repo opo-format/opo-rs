@@ -88,3 +88,31 @@ fn door_plan_and_model() {
             .contains("<polygon")
     );
 }
+
+#[test]
+fn voids_are_not_drawn_in_the_model_view() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: spec.clone(),
+    };
+    let mut def = load_type(&spec.join("library/templates/IfcOpeningElement")).unwrap();
+    let ev = run(&def, &Input::default(), &resolver).unwrap();
+    let with_void = model_svg(&def, &ev, "model.medium").unwrap();
+    let mut voids = 0;
+    for rep in &mut def.representations {
+        for item in rep.items.iter_mut().flatten() {
+            if item.role.as_deref() == Some("void") {
+                item.role = None;
+                voids += 1;
+            }
+        }
+    }
+    assert!(voids > 0, "the opening has a void");
+    let drawn = model_svg(&def, &ev, "model.medium").unwrap();
+    assert!(!with_void.contains("<polygon"), "the void is not drawn");
+    assert!(
+        drawn.contains("<polygon"),
+        "the same solid draws without the role"
+    );
+}
