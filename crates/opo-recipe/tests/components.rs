@@ -124,3 +124,24 @@ fn missing_interface_inputs_and_unreported_values_fail() {
     let err = run(&def, &Input::default(), &Lib).unwrap_err().to_string();
     assert!(err.contains("does not report 'face_w'"), "{err}");
 }
+
+#[test]
+fn interface_inputs_not_passed_are_null_when_run_alone() {
+    let mut def = mullion();
+    def.recipe[0].args.insert(
+        "min".into(),
+        json!("[path[1][1] - face_width / 2 + (if left_cell = null then 0 else 1), -depth / 2, path[1][3] + trim_start]"),
+    );
+    let mut input = Input::default();
+    input
+        .inputs
+        .insert("path".into(), json!([[0, 0, 0], [0, 0, 3]]));
+    input.inputs.insert("trim_start".into(), json!(0));
+    input.inputs.insert("trim_end".into(), json!(0));
+    let ev = run(&def, &input, &Lib).unwrap();
+    assert_eq!(
+        ev.items("body").unwrap().len(),
+        1,
+        "left_cell is null, not unknown"
+    );
+}

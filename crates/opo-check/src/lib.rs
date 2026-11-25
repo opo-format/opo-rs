@@ -414,6 +414,8 @@ impl Names<'_> {
 fn names(def: &TypeDefinition, errs: &mut Vec<String>) {
     let mut known: HashSet<String> = def.parameters.iter().map(|p| p.name.clone()).collect();
     known.extend(def.slots.iter().flatten().map(|s| s.name.clone()));
+    // The inputs an object accepts through its interface (they may be null).
+    known.extend(def.interface.iter().flat_map(|i| i.inputs.iter().cloned()));
     known.extend(CONTEXT_ROOTS.iter().map(|s| s.to_string()));
     known.extend(Op::ALL.iter().map(|o| o.name().to_string()));
     let mut n = Names { known, errs };
@@ -880,6 +882,33 @@ mod tests {
         let mut c = vec![[1.0, 2.0, 3.1], [0.0, 0.0, 0.0]];
         assert!(!same_points(&mut a, &mut c));
         assert!(!same_points(&mut a, &mut vec![[0.0, 0.0, 0.0]]));
+    }
+
+    #[test]
+    fn interface_inputs_are_known_names() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../opo-spec/conformance/fixtures/library/templates/IfcOpeningElement");
+        let mut def = load_type(&dir).unwrap();
+        def.rules
+            .get_or_insert_with(Default::default)
+            .derived
+            .get_or_insert_with(Vec::new)
+            .push(opo_model::Derived {
+                name: "corner".into(),
+                expr: serde_json::from_value(json!("left_cell != null")).unwrap(),
+                note: None,
+            });
+        let mut errs = Vec::new();
+        names(&def, &mut errs);
+        assert!(errs.iter().any(|e| e.contains("left_cell")), "{errs:?}");
+        def.interface = Some(opo_model::Interface {
+            name: "frame".into(),
+            inputs: vec!["left_cell".into()],
+            reports: vec![],
+        });
+        let mut errs = Vec::new();
+        names(&def, &mut errs);
+        assert!(!errs.iter().any(|e| e.contains("left_cell")), "{errs:?}");
     }
 
     #[test]
