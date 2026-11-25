@@ -377,13 +377,19 @@ fn material_ids(src: &Map<String, Json>, layers: &[(String, Json)]) -> Vec<Strin
 }
 
 /// The shared rule-set layers an object gets: `ruleset-<id>-<variant>` for every rule set it
-/// declares in `rules.rulesets` and has no rule-set layer of its own for (proposal 0002).
+/// declares in `rules.rulesets` and has no rule-set layer of its own for (proposal 0002). When
+/// the declaration lists `fields`, only those values are kept, so an object declares just the
+/// fields it uses.
 fn shared_rulesets(object: &Json, layers: &[(String, Json)], lib: &Library) -> Vec<(String, Json)> {
-    let declared: Vec<String> = match object.pointer("/rules/rulesets") {
-        Some(Json::Object(m)) => m.keys().cloned().collect(),
+    let declared: Vec<(String, Option<Vec<String>>)> = match object.pointer("/rules/rulesets") {
+        Some(Json::Object(m)) => m.iter().map(|(k, d)| (k.clone(), fields_of(d))).collect(),
         Some(Json::Array(a)) => a
             .iter()
-            .filter_map(|r| r.get("id").and_then(Json::as_str).map(str::to_owned))
+            .filter_map(|r| {
+                r.get("id")
+                    .and_then(Json::as_str)
+                    .map(|id| (id.to_owned(), fields_of(r)))
+            })
             .collect(),
         _ => Vec::new(),
     };
@@ -393,12 +399,27 @@ fn shared_rulesets(object: &Json, layers: &[(String, Json)], lib: &Library) -> V
         .filter_map(|(_, l)| l.get("id").and_then(Json::as_str))
         .collect();
     let mut out = Vec::new();
-    for id in declared.iter().filter(|id| !own.contains(&id.as_str())) {
+    for (id, fields) in declared
+        .iter()
+        .filter(|(id, _)| !own.contains(&id.as_str()))
+    {
         for (variant, l) in lib.rulesets.get(id).into_iter().flatten() {
-            out.push((format!("ruleset-{id}-{variant}"), l.clone()));
+            let mut l = l.clone();
+            if let (Some(fields), Some(Json::Object(values))) = (fields, l.get_mut("values")) {
+                values.retain(|k, _| fields.contains(k));
+            }
+            out.push((format!("ruleset-{id}-{variant}"), l));
         }
     }
     out
+}
+
+/// The field names of a rule-set declaration, if it lists them.
+fn fields_of(declaration: &Json) -> Option<Vec<String>> {
+    declaration
+        .get("fields")
+        .and_then(Json::as_object)
+        .map(|f| f.keys().cloned().collect())
 }
 
 /// Compile an object source with its layers (file stem, layer source). `base` is the
@@ -790,6 +811,11 @@ mod tests {
             .map(|(n, _)| n)
             .collect();
         assert_eq!(names, ["ruleset-stairs-uk", "ruleset-stairs-us"]);
+        // Only the declared fields are kept.
+        let narrow =
+            json!({"rules": {"rulesets": {"stairs": {"fields": {"going_min": "length"}}}}});
+        let got = shared_rulesets(&narrow, &[], &lib);
+        assert_eq!(got[0].1["values"], json!({}));
         let own = vec![(
             "my-stairs".to_owned(),
             json!({"kind": "ruleset", "id": "stairs"}),
