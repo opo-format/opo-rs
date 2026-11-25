@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use opo_check::{DirResolver, load_type};
 use opo_recipe::{Input, run};
-use opo_render::{model_svg, plan_svg};
+use opo_render::{model_svg, plan_svg, solid_colour};
 
 fn spec_dir() -> PathBuf {
     std::env::var_os("OPO_SPEC_DIR")
@@ -114,5 +114,29 @@ fn voids_are_not_drawn_in_the_model_view() {
     assert!(
         drawn.contains("<polygon"),
         "the same solid draws without the role"
+    );
+}
+
+#[test]
+fn nested_objects_keep_their_material_colours() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: spec.clone(),
+    };
+    let def = load_type(&spec.join("examples/grid/stick-wall")).unwrap();
+    let ev = run(&def, &Input::default(), &resolver).unwrap();
+    let rep = def.representation("model.medium").unwrap();
+    let item = rep
+        .items
+        .iter()
+        .flatten()
+        .find(|i| i.geometry == "panels")
+        .unwrap();
+    let g = &ev.items("panels").unwrap()[0];
+    assert_eq!(
+        solid_colour(&def, item, &ev, g),
+        "#bcd4dc",
+        "glass, from the panel object"
     );
 }

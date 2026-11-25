@@ -164,6 +164,31 @@ fn material_key(
     }
 }
 
+/// The display colour of one geometry of a representation item: the item's material, or the
+/// material a nested object gave it, looked up in the object's materials; grey when unknown.
+pub fn solid_colour(
+    def: &TypeDefinition,
+    item: &RepresentationItem,
+    ev: &Evaluation,
+    g: &Geometry,
+) -> String {
+    let key = match item.material.as_deref() {
+        Some(m) => material_key(m, item, ev, g),
+        None => match &g.material {
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        },
+    };
+    key.and_then(|m| {
+        def.materials
+            .iter()
+            .flatten()
+            .find(|(k, _)| *k == m)
+            .and_then(|(_, mat)| mat.colour.clone())
+    })
+    .unwrap_or_else(|| "#bbbbbb".into())
+}
+
 fn svg_document(b: Bounds, body: &str, flip: bool) -> String {
     let (b, empty) = if b.empty() {
         (
@@ -500,18 +525,7 @@ pub fn model_svg(
             .map_err(|e| Error::Recipe(e.to_string()))?
         {
             let Some(s) = g.solid() else { continue };
-            let colour = item
-                .material
-                .as_deref()
-                .and_then(|m| material_key(m, item, ev, &g))
-                .and_then(|m| {
-                    def.materials
-                        .iter()
-                        .flatten()
-                        .find(|(key, _)| *key == m)
-                        .and_then(|(_, mat)| mat.colour.clone())
-                })
-                .unwrap_or_else(|| "#bbbbbb".into());
+            let colour = solid_colour(def, item, ev, &g);
             let base = hex(&colour);
             let mut tris = Vec::new();
             let centre = s
