@@ -270,6 +270,12 @@ pub enum SlotType {
     PolygonList,
     Curve,
     Region,
+    /// `{baseline, base, top}` or `{face}` (proposal 0001 §4).
+    Surface,
+    /// A fixed number (`count`) of 3D points (proposal 0001 §4).
+    Points,
+    /// Per-instance grid edits; belongs to the placed instance (proposal 0001 §5).
+    Overrides,
 }
 
 /// Planes (spec §4.5).
@@ -298,8 +304,12 @@ pub struct Slot {
     /// Plane the geometry is drawn in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plane: Option<Plane>,
-    /// Default geometry, or null when the slot starts empty. Always written.
-    pub default: Option<Vec<Json>>,
+    /// Default geometry (a list of points, a surface context, a list of edits), or null when
+    /// the slot starts empty. Always written.
+    pub default: Option<Json>,
+    /// Number of points of a `points` slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
     /// The slot may stay empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional: Option<bool>,

@@ -93,13 +93,21 @@ fn environment(
         env.insert(p.name.clone(), p.default.clone());
     }
     for s in def.slots.iter().flatten() {
-        env.insert(
-            s.name.clone(),
-            s.default.clone().map(Json::Array).unwrap_or(Json::Null),
-        );
+        env.insert(s.name.clone(), s.default.clone().unwrap_or(Json::Null));
     }
     env.extend(values.iter().map(|(k, v)| (k.clone(), v.clone())));
     env.extend(inputs.iter().map(|(k, v)| (k.clone(), v.clone())));
+    for s in def.slots.iter().flatten() {
+        if let (Some(n), Some(Json::Array(p))) = (s.count, env.get(&s.name)) {
+            if p.len() != n as usize {
+                return Err(Error::Op(format!(
+                    "slot {} needs {n} points, got {}",
+                    s.name,
+                    p.len()
+                )));
+            }
+        }
+    }
 
     let mut host = serde_json::json!({"thickness": 0.2, "y_min": -0.1, "y_max": 0.1, "bottom": 0.0, "top": 3.0});
     for (k, decl) in def

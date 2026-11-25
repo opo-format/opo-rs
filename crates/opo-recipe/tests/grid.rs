@@ -104,3 +104,40 @@ fn overrides_reach_the_grid() {
     assert_eq!(list(&g, "cells").len(), 5);
     assert_eq!(list(&g, "unused_overrides").len(), 1);
 }
+
+#[test]
+fn surface_points_and_overrides_slots() {
+    let dir = spec_dir().join("conformance/fixtures/library/templates/IfcOpeningElement");
+    let obj = load_object_dir(&dir).unwrap();
+    let c = compose(std::slice::from_ref(&obj.base)).unwrap();
+    let mut attrs = c.node(c.type_node().unwrap()).unwrap().attributes.clone();
+    attrs.insert(
+        "opo::slots".into(),
+        json!([
+            {"name": "surface", "type": "surface", "default": {"baseline": [[0, 0], [2, 0]], "base": 0, "top": 2}},
+            {"name": "corners", "type": "points", "count": 4, "default": [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]]},
+            {"name": "overrides", "type": "overrides", "default": [{"remove": "v1.0"}]}
+        ]),
+    );
+    attrs.insert(
+        "opo::recipe".into(),
+        json!([{"id": "g", "op": "grid", "args": {
+            "surface": "surface",
+            "u": "{pattern: [{size: 2}], distribution: \"count\"}",
+            "v": "{pattern: [{size: 1}], distribution: \"count\"}",
+            "overrides": "overrides"
+        }}]),
+    );
+    let def = TypeDefinition::from_attributes(&attrs).unwrap();
+    let ev = run(&def, &Input::default(), &NoNesting).unwrap();
+    assert_eq!(
+        list(&ev.geometry["g"], "cells").len(),
+        1,
+        "the override merged the two cells"
+    );
+
+    let mut input = Input::default();
+    input.inputs.insert("corners".into(), json!([[0, 0, 0]]));
+    let err = run(&def, &input, &NoNesting).unwrap_err().to_string();
+    assert!(err.contains("needs 4 points"), "{err}");
+}
