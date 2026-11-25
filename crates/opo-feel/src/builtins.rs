@@ -4,8 +4,9 @@
 use crate::Error;
 use crate::value::{EPSILON, Value};
 
-const NAMES: [&str; 29] = [
+const NAMES: [&str; 30] = [
     "layout",
+    "component_for",
     "mm",
     "cm",
     "m",
@@ -110,6 +111,21 @@ fn flatten_into(items: &[Value], out: &mut Vec<Value>) {
 pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, Error> {
     Ok(match name {
         "layout" => return crate::layout::call(args),
+        // The object for a member class in a class map, else its `default`; a plain object
+        // id is returned as it is (proposal 0001 §2).
+        "component_for" => {
+            arity(name, args, |n| n == 2)?;
+            match (&args[0], &args[1]) {
+                (Value::Context(m), Value::String(cls)) => m
+                    .get(cls)
+                    .filter(|v| !matches!(v, Value::Null))
+                    .or_else(|| m.get("default"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                (Value::String(id), _) => Value::String(id.clone()),
+                _ => Value::Null,
+            }
+        }
         "mm" => return unary(name, args, |v| v / 1000.0),
         "cm" => return unary(name, args, |v| v / 100.0),
         "m" | "deg" => return unary(name, args, |v| v),
@@ -319,6 +335,20 @@ mod tests {
     fn index_of_and_contains_use_number_tolerance() {
         assert_eq!(ev("index_of([0.3, 1], 0.1 + 0.2)"), ev("[1]"));
         assert_eq!(ev("list_contains([0.3], 0.1 + 0.2)"), Value::Bool(true));
+    }
+
+    #[test]
+    fn component_for_reads_class_maps() {
+        assert_eq!(
+            ev(r#"component_for({main: "a", default: "d"}, "main")"#),
+            ev(r#""a""#)
+        );
+        assert_eq!(
+            ev(r#"component_for({main: "a", default: "d"}, "spandrel")"#),
+            ev(r#""d""#)
+        );
+        assert_eq!(ev(r#"component_for("x", "main")"#), ev(r#""x""#));
+        assert_eq!(ev("component_for(1, 2)"), Value::Null);
     }
 
     #[test]

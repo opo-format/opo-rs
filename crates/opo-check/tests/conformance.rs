@@ -246,3 +246,36 @@ fn grid_class_rules_see_their_member() {
     assert_eq!(names.len(), 1, "{:?}", r.errors);
     assert!(names[0].contains("classes.cell") && names[0].contains("no_such_name"));
 }
+
+#[test]
+fn component_objects_must_declare_the_interface() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let (resolver, ifc) = options(&spec);
+    let opts = Options {
+        resolver: &resolver,
+        ifc: Some(&ifc),
+    };
+    let src = spec.join("library/templates/IfcBoiler");
+    let d = copy(&src, "component");
+    edit(&d, |a| {
+        a["opo::parameters"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "name": "mullion", "type": "component", "interface": "frame",
+                "default": "opo-format.org/library/templates/IfcBeam", "label": "M", "group": "G",
+                "allowed": {"ifc_class": "IfcMember"}
+            }));
+    });
+    let r = check_dir(&d, &opts);
+    assert!(
+        r.errors.iter().any(|e| e.contains("declares no interface")),
+        "{:?}",
+        r.errors
+    );
+    assert!(
+        r.errors.iter().any(|e| e.contains("allows IfcMember")),
+        "{:?}",
+        r.errors
+    );
+}

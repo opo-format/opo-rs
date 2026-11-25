@@ -90,7 +90,12 @@ fn environment(
 ) -> Result<Scope, Error> {
     let mut env: Map<String, Json> = Map::new();
     for p in &def.parameters {
-        env.insert(p.name.clone(), p.default.clone());
+        // A class map's value is its classes (`component_for` reads it).
+        let v = match (&p.classes, &p.default) {
+            (Some(c), Json::Null) => Json::Object(c.clone()),
+            _ => p.default.clone(),
+        };
+        env.insert(p.name.clone(), v);
     }
     for s in def.slots.iter().flatten() {
         env.insert(s.name.clone(), s.default.clone().unwrap_or(Json::Null));
@@ -207,6 +212,12 @@ impl Env for StepEnv<'_> {
                 )
             }
             Op::ForEach | Op::Grid => Err(Error::Op(format!("{name} cannot be called inline"))),
+            Op::Reported => self.runner.reported(
+                args.first().unwrap_or(&Value::Null),
+                args.get(1).unwrap_or(&Value::Null),
+                args.get(2).unwrap_or(&Value::Null),
+                args.get(3).unwrap_or(&Value::Null),
+            ),
             _ => ops::apply(op, self.plane, &args),
         };
         Some(result.map_err(|e| opo_feel::Error::Eval(e.to_string())))
@@ -306,6 +317,18 @@ impl Runner<'_> {
                     list_value(out)
                 }
                 Op::Grid => self.grid(step, &senv, &at)?,
+                Op::Reported => {
+                    let get = |k: &str| match arg(k) {
+                        Some(a) => senv.eval(a, &at(k)),
+                        None => Ok(Value::Null),
+                    };
+                    self.reported(
+                        &get("object")?,
+                        &get("name")?,
+                        &get("values")?,
+                        &get("inputs")?,
+                    )?
+                }
                 Op::Instance => {
                     let object = senv.eval(arg("object").unwrap_or(&Json::Null), &at("object"))?;
                     let vals = senv.eval(
@@ -423,6 +446,43 @@ impl Runner<'_> {
         Ok(g.value())
     }
 
+    /// A derived value a nested object reports through its interface (proposal 0001 §3).
+    fn reported(
+        &self,
+        object: &Value,
+        name: &Value,
+        values: &Value,
+        inputs: &Value,
+    ) -> Result<Value, Error> {
+        let (Value::String(id), Value::String(name)) = (object, name) else {
+            return Err(Error::Op(
+                "reported(object, name, …): object and name are text".into(),
+            ));
+        };
+        let def = self
+            .resolver
+            .resolve(id)
+            .ok_or_else(|| Error::Resolve(format!("cannot resolve nested object {id}")))?;
+        let declared = def
+            .interface
+            .as_ref()
+            .is_some_and(|i| i.reports.iter().any(|r| r == name));
+        if !declared {
+            return Err(Error::Resolve(format!("{id} does not report '{name}'")));
+        }
+        if self.depth >= MAX_DEPTH {
+            return Err(Error::Op(format!("objects nested deeper than {MAX_DEPTH}")));
+        }
+        // Reported values are derived values: the nested recipe does not run.
+        let env = environment(
+            &def,
+            &to_json_map(values),
+            &to_json_map(inputs),
+            self.context,
+        )?;
+        Ok(env.get(name).cloned().unwrap_or(Value::Null))
+    }
+
     /// Place a nested object and return the items of one of its representations.
     fn instance(
         &self,
@@ -443,6 +503,16 @@ impl Runner<'_> {
             .resolver
             .resolve(&id)
             .ok_or_else(|| Error::Resolve(format!("cannot resolve nested object {id}")))?;
+        // An object that fills a component slot needs every input of its interface.
+        if let Some(i) = &def.interface {
+            let given = to_json_map(inputs);
+            if let Some(missing) = i.inputs.iter().find(|x| !given.contains_key(*x)) {
+                return Err(Error::Resolve(format!(
+                    "{id}: interface {} input '{missing}' is not passed",
+                    i.name
+                )));
+            }
+        }
         let sub = Runner {
             resolver: self.resolver,
             context: self.context,

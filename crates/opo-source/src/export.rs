@@ -196,6 +196,7 @@ pub fn export(obj: &ObjectDir, base: &str) -> Result<Exported, Error> {
         ("opo::host", "host"),
         ("opo::handles", "handles"),
         ("opo::ports", "ports"),
+        ("opo::interface", "interface"),
     ] {
         if let Some(v) = get(attr) {
             src.insert(k.into(), v.clone());

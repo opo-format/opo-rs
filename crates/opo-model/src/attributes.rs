@@ -115,6 +115,8 @@ pub enum ParameterType {
     Colour,
     Layers,
     PropertySet,
+    /// A nested object chosen by the user (proposal 0001 §3).
+    Component,
 }
 
 /// One entry of `opo::parameters`.
@@ -153,6 +155,53 @@ pub struct Parameter {
     /// Properties of a `property_set` parameter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub properties: Option<Vec<PsetProperty>>,
+    /// Interface a `component` parameter's objects must declare (`frame`, `panel`…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interface: Option<String>,
+    /// Objects a `component` parameter accepts: `{ifc_class}` or a list of object ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<Json>,
+    /// A class map: one object id per member class, with a `default` entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classes: Option<Map<String, Json>>,
+}
+
+/// `opo::interface`: what an object that fills a component slot accepts and reports
+/// (proposal 0001 §3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Interface {
+    /// Interface name: `frame`, `panel`, `node`, `post` or an object's own.
+    pub name: String,
+    /// Inputs the parent must pass (they may be null).
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    /// Derived values reported back to the parent.
+    #[serde(default)]
+    pub reports: Vec<String>,
+}
+
+impl Interface {
+    /// The inputs and reports a standard interface requires, or `None` for an object's own.
+    pub fn standard(name: &str) -> Option<(&'static [&'static str], &'static [&'static str])> {
+        Some(match name {
+            "frame" => (
+                &[
+                    "path",
+                    "normal",
+                    "trim_start",
+                    "trim_end",
+                    "left_cell",
+                    "right_cell",
+                ],
+                &["face_width", "depth", "offset"],
+            ),
+            "panel" => (&["outline", "normal", "insets"], &["thickness", "offset"]),
+            "node" => (&["point", "normal", "directions"], &[]),
+            "post" => (&["point", "direction", "height", "normal"], &["face_width"]),
+            _ => return None,
+        })
+    }
 }
 
 /// `options` of a parameter.
@@ -558,11 +607,12 @@ pub enum Op {
     ForEach,
     Instance,
     Grid,
+    Reported,
 }
 
 impl Op {
     /// Every operation.
-    pub const ALL: [Op; 23] = [
+    pub const ALL: [Op; 24] = [
         Op::Rectangle,
         Op::Polygon,
         Op::Circle,
@@ -586,6 +636,7 @@ impl Op {
         Op::ForEach,
         Op::Instance,
         Op::Grid,
+        Op::Reported,
     ];
 
     /// The name used in files and in inline FEEL calls.
@@ -614,6 +665,7 @@ impl Op {
             Op::ForEach => "for_each",
             Op::Instance => "instance",
             Op::Grid => "grid",
+            Op::Reported => "reported",
         }
     }
 
@@ -651,6 +703,7 @@ impl Op {
                 &["surface", "u", "v"],
                 &["join", "classes", "overrides", "widths"],
             ),
+            Op::Reported => (&["object", "name"], &["values", "inputs"]),
         }
     }
 }

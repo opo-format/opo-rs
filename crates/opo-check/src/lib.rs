@@ -192,12 +192,57 @@ pub fn check_dir(dir: &Path, opts: &Options) -> Report {
     structure(&docs, &comp, &obj.layers, &def, &mut r.errors);
     r.to_verify = to_verify(&docs);
     names(&def, &mut r.errors);
+    components(&def, opts, &mut r.errors);
     if let Some(t) = opts.ifc {
         ifc_names(&def, t, &mut r.errors);
     }
     evaluation(&docs, &comp, &def, opts, &mut r);
     baked(&obj.base, &def, opts, &mut r.errors);
     r
+}
+
+/// Every object a component parameter names resolves, declares the parameter's interface
+/// and is one the parameter allows (proposal 0001 §3).
+fn components(def: &TypeDefinition, opts: &Options, errs: &mut Vec<String>) {
+    for p in &def.parameters {
+        if p.kind != opo_model::ParameterType::Component {
+            continue;
+        }
+        let want = p.interface.as_deref().unwrap_or_default();
+        let ids = p
+            .default
+            .as_str()
+            .into_iter()
+            .chain(p.classes.iter().flatten().filter_map(|(_, v)| v.as_str()));
+        for id in ids {
+            let at = format!("parameter {}: {id}", p.name);
+            let Some(sub) = opts.resolver.resolve(id) else {
+                errs.push(format!("{at}: cannot resolve the object"));
+                continue;
+            };
+            match &sub.interface {
+                Some(i) if i.name == want => {}
+                Some(i) => errs.push(format!("{at}: declares interface {}, not {want}", i.name)),
+                None => errs.push(format!("{at}: declares no interface (needs {want})")),
+            }
+            match &p.allowed {
+                Some(Json::Object(a)) => {
+                    if let Some(c) = a.get("ifc_class").and_then(Json::as_str) {
+                        if sub.ifc.class != c {
+                            errs.push(format!(
+                                "{at}: is {}, the parameter allows {c}",
+                                sub.ifc.class
+                            ));
+                        }
+                    }
+                }
+                Some(Json::Array(list)) if !list.iter().any(|x| x.as_str() == Some(id)) => {
+                    errs.push(format!("{at}: is not in the allowed list"));
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------------ 1. structure
@@ -322,6 +367,7 @@ fn parse_attribute(name: &str, v: &Json) -> Result<(), String> {
         "opo::materials" => p::<HashMap<String, m::Material>>(v),
         "opo::hatches" => p::<HashMap<String, m::Hatch>>(v),
         "opo::ports" => p::<Vec<m::Port>>(v),
+        "opo::interface" => p::<m::Interface>(v),
         "opo::ifc" => p::<m::Ifc>(v),
         "opo::values" | "opo::inputs" => p::<Map<String, Json>>(v),
         "opo::representation" | "opo::note" => p::<String>(v),

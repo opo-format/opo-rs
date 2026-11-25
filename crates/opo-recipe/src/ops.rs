@@ -399,7 +399,7 @@ pub(crate) fn apply(op: Op, plane: Plane, a: &[Value]) -> Result<Value, Error> {
                 )?)
             }
         }
-        Op::ForEach | Op::Instance | Op::Grid => {
+        Op::ForEach | Op::Instance | Op::Grid | Op::Reported => {
             return Err(Error::Op(format!("{} is handled by the runner", op.name())));
         }
     })
