@@ -491,6 +491,10 @@ pub fn model_svg(
     let mut solids: Vec<(f64, Vec<Triangle>)> = Vec::new();
     let mut bounds = Bounds::new();
     for item in items_of(rep) {
+        // A void cuts the host; it is not drawn.
+        if item.role.as_deref() == Some("void") {
+            continue;
+        }
         for g in ev
             .items(&item.geometry)
             .map_err(|e| Error::Recipe(e.to_string()))?
