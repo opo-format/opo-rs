@@ -100,6 +100,10 @@ fn environment(
     for s in def.slots.iter().flatten() {
         env.insert(s.name.clone(), s.default.clone().unwrap_or(Json::Null));
     }
+    // Interface inputs that are not slots are null until a parent passes them.
+    for i in def.interface.iter().flat_map(|i| i.inputs.iter()) {
+        env.entry(i.clone()).or_insert(Json::Null);
+    }
     env.extend(values.iter().map(|(k, v)| (k.clone(), v.clone())));
     env.extend(inputs.iter().map(|(k, v)| (k.clone(), v.clone())));
     for s in def.slots.iter().flatten() {
