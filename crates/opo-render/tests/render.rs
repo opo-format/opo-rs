@@ -158,5 +158,9 @@ fn door_elevation_has_the_model_and_its_lines() {
         drawn.len() > bare.len(),
         "the elevation lines are drawn over it"
     );
+    assert!(
+        drawn.contains("stroke-dasharray") && !bare.contains("stroke-dasharray"),
+        "the swing indicator is dashed in elevation"
+    );
     assert!(elevation_svg(&def, &ev, "model.medium", Some("elevation.none"), 50.0).is_err());
 }
