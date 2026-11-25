@@ -298,12 +298,19 @@ fn render(args: &[String]) -> Result<bool, String> {
         "plan" => opo_render::plan_svg(&def, &ev, rep.as_deref().unwrap_or("plan.medium"), scale),
         "model" => opo_render::model_svg(&def, &ev, rep.as_deref().unwrap_or("model.medium")),
         "elevation" => {
-            // The 3D model seen from the front, with the elevation representation's 2D items
-            // (opening symbols) over it when it has any.
-            let overlay = def
-                .representation("elevation")
-                .filter(|r| r.items.as_ref().is_some_and(|i| !i.is_empty()))
-                .map(|_| "elevation");
+            // The 3D model seen from the front, with the first elevation representation that
+            // has 2D items (opening symbols) drawn over it.
+            let overlay = [
+                "elevation",
+                "elevation.medium",
+                "elevation.low",
+                "elevation.high",
+            ]
+            .into_iter()
+            .find(|id| {
+                def.representation(id)
+                    .is_some_and(|r| r.items.as_ref().is_some_and(|i| !i.is_empty()))
+            });
             opo_render::elevation_svg(
                 &def,
                 &ev,

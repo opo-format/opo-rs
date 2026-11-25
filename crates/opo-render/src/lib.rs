@@ -287,7 +287,7 @@ pub fn plan_svg(
     scale: f64,
 ) -> Result<String, Error> {
     let rep = representation(def, representation_id)?;
-    let (defs, body, bounds) = draw_2d(def, ev, rep, scale)?;
+    let (defs, body, bounds) = draw_2d(def, ev, rep, scale, false)?;
     let mut all = String::new();
     if !defs.is_empty() {
         writeln!(all, "<defs>\n{defs}</defs>").unwrap();
@@ -297,12 +297,14 @@ pub fn plan_svg(
 }
 
 /// The 2D items of a representation as SVG: clip and pattern definitions, the drawing, and its
-/// bounds (y flipped for SVG).
+/// bounds (y flipped for SVG). In an elevation, swing lines are drawn dashed like opening
+/// symbols.
 fn draw_2d(
     def: &TypeDefinition,
     ev: &Evaluation,
     rep: &opo_model::Representation,
     scale: f64,
+    elevation: bool,
 ) -> Result<(String, String, Bounds), Error> {
     let k = scale / 1000.0;
     let mut bounds = Bounds::new();
@@ -310,7 +312,11 @@ fn draw_2d(
     let mut body = String::new();
     let mut clip = 0usize;
     for item in items_of(rep) {
-        let p = pen(item.class, item.role.as_deref());
+        let role = match item.role.as_deref() {
+            Some("swing") if elevation => Some("opening"),
+            r => r,
+        };
+        let p = pen(item.class, role);
         let geoms = ev
             .items(&item.geometry)
             .map_err(|e| Error::Recipe(e.to_string()))?;
@@ -551,7 +557,7 @@ pub fn elevation_svg(
     )?;
     let mut overlay = String::new();
     if let Some(id) = elevation_id {
-        let (defs, body, b) = draw_2d(def, ev, representation(def, id)?, scale)?;
+        let (defs, body, b) = draw_2d(def, ev, representation(def, id)?, scale, true)?;
         if !defs.is_empty() {
             writeln!(overlay, "<defs>\n{defs}</defs>").unwrap();
         }
