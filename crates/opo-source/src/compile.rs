@@ -376,6 +376,31 @@ fn material_ids(src: &Map<String, Json>, layers: &[(String, Json)]) -> Vec<Strin
     ids
 }
 
+/// The shared rule-set layers an object gets: `ruleset-<id>-<variant>` for every rule set it
+/// declares in `rules.rulesets` and has no rule-set layer of its own for (proposal 0002).
+fn shared_rulesets(object: &Json, layers: &[(String, Json)], lib: &Library) -> Vec<(String, Json)> {
+    let declared: Vec<String> = match object.pointer("/rules/rulesets") {
+        Some(Json::Object(m)) => m.keys().cloned().collect(),
+        Some(Json::Array(a)) => a
+            .iter()
+            .filter_map(|r| r.get("id").and_then(Json::as_str).map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let own: Vec<&str> = layers
+        .iter()
+        .filter(|(_, l)| l.get("kind").and_then(Json::as_str) == Some("ruleset"))
+        .filter_map(|(_, l)| l.get("id").and_then(Json::as_str))
+        .collect();
+    let mut out = Vec::new();
+    for id in declared.iter().filter(|id| !own.contains(&id.as_str())) {
+        for (variant, l) in lib.rulesets.get(id).into_iter().flatten() {
+            out.push((format!("ruleset-{id}-{variant}"), l.clone()));
+        }
+    }
+    out
+}
+
 /// Compile an object source with its layers (file stem, layer source). `base` is the
 /// object's repository path (ids and node ids derive from it, e.g.
 /// `library/templates/IfcWall`).
@@ -387,6 +412,14 @@ pub fn compile(
     resolver: &dyn Resolver,
     timestamp: &str,
 ) -> Result<Compiled, Error> {
+    let shared = shared_rulesets(object, layers, lib);
+    let with_shared: Vec<(String, Json)>;
+    let layers: &[(String, Json)] = if shared.is_empty() {
+        layers
+    } else {
+        with_shared = layers.iter().cloned().chain(shared).collect();
+        &with_shared
+    };
     let mut src = object
         .as_object()
         .cloned()
@@ -738,5 +771,30 @@ mod tests {
             json!([{"name": "b", "type": "length"}, {"name": "a", "type": "angle"}])
         );
         assert!(named_list(Some(&json!({"b": {"name": "b"}})), "name", "parameters").is_err());
+    }
+
+    #[test]
+    fn shared_rulesets_are_added_unless_the_object_has_its_own() {
+        let mut lib = Library::default();
+        let uk = json!({"kind": "ruleset", "id": "stairs", "label": "UK", "source": "s", "values": {"riser_max": "0.22"}});
+        let us = json!({"kind": "ruleset", "id": "stairs", "label": "US", "source": "s", "values": {"riser_max": "0.196"}});
+        lib.rulesets
+            .insert("stairs".into(), vec![("uk".into(), uk), ("us".into(), us)]);
+        lib.rulesets.insert(
+            "guards".into(),
+            vec![("uk".into(), json!({"kind": "ruleset", "id": "guards"}))],
+        );
+        let object = json!({"rules": {"rulesets": {"stairs": {"default": null}}}});
+        let names: Vec<String> = shared_rulesets(&object, &[], &lib)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(names, ["ruleset-stairs-uk", "ruleset-stairs-us"]);
+        let own = vec![(
+            "my-stairs".to_owned(),
+            json!({"kind": "ruleset", "id": "stairs"}),
+        )];
+        assert!(shared_rulesets(&object, &own, &lib).is_empty());
+        assert!(shared_rulesets(&json!({}), &[], &lib).is_empty());
     }
 }
