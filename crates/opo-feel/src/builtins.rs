@@ -4,7 +4,8 @@
 use crate::Error;
 use crate::value::{EPSILON, Value};
 
-const NAMES: [&str; 28] = [
+const NAMES: [&str; 29] = [
+    "layout",
     "mm",
     "cm",
     "m",
@@ -108,6 +109,7 @@ fn flatten_into(items: &[Value], out: &mut Vec<Value>) {
 /// Call a built-in function. The caller has checked [`is_builtin`].
 pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, Error> {
     Ok(match name {
+        "layout" => return crate::layout::call(args),
         "mm" => return unary(name, args, |v| v / 1000.0),
         "cm" => return unary(name, args, |v| v / 100.0),
         "m" | "deg" => return unary(name, args, |v| v),
