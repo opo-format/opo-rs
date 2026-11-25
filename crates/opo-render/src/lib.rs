@@ -53,6 +53,14 @@ struct Pen {
 }
 
 fn pen(class: Option<LineClass>, role: Option<&str>) -> Pen {
+    if role == Some("opening") {
+        // Opening symbols (sash triangles, swing lines) are drawn dashed.
+        return Pen {
+            width: 0.18,
+            dash: &[2.0, 1.0],
+            colour: "#000000",
+        };
+    }
     if role == Some("clearance") {
         return Pen {
             width: 0.13,
@@ -279,6 +287,23 @@ pub fn plan_svg(
     scale: f64,
 ) -> Result<String, Error> {
     let rep = representation(def, representation_id)?;
+    let (defs, body, bounds) = draw_2d(def, ev, rep, scale)?;
+    let mut all = String::new();
+    if !defs.is_empty() {
+        writeln!(all, "<defs>\n{defs}</defs>").unwrap();
+    }
+    all.push_str(&body);
+    Ok(svg_document(bounds, &all, true))
+}
+
+/// The 2D items of a representation as SVG: clip and pattern definitions, the drawing, and its
+/// bounds (y flipped for SVG).
+fn draw_2d(
+    def: &TypeDefinition,
+    ev: &Evaluation,
+    rep: &opo_model::Representation,
+    scale: f64,
+) -> Result<(String, String, Bounds), Error> {
     let k = scale / 1000.0;
     let mut bounds = Bounds::new();
     let mut defs = String::new();
@@ -447,12 +472,7 @@ pub fn plan_svg(
             }
         }
     }
-    let mut all = String::new();
-    if !defs.is_empty() {
-        writeln!(all, "<defs>\n{defs}</defs>").unwrap();
-    }
-    all.push_str(&body);
-    Ok(svg_document(bounds, &all, true))
+    Ok((defs, body, bounds))
 }
 
 /// The half-diagonal and the centre of the bounding box of a region.
@@ -485,7 +505,8 @@ fn hex(c: &str) -> [f64; 3] {
 
 /// Draw the solids of a 3D representation in an axonometric view (elevation 24°, azimuth −58°),
 /// coloured by material, shaded by a light from the upper left and outlined part by part. The
-/// view is drawn with a depth buffer and embedded as an image, so hidden parts stay hidden.
+/// view is drawn with a depth buffer and embedded as an image, so hidden parts stay hidden;
+/// glass is drawn see-through.
 pub fn model_svg(
     def: &TypeDefinition,
     ev: &Evaluation,
@@ -500,6 +521,62 @@ pub fn model_svg(
         -elev.sin() * azim.sin(),
         elev.cos(),
     ];
+    let (tris, bounds) = view_triangles(def, ev, rep, eye, right, up)?;
+    let body = if tris.is_empty() {
+        String::new()
+    } else {
+        raster_image(&tris, &bounds)
+    };
+    Ok(svg_document(bounds, &body, true))
+}
+
+/// Draw an elevation: the 3D representation seen square from the −y side (x to the right, z
+/// up), drawn as in [`model_svg`], with the 2D items of the elevation representation, if there
+/// is one, drawn over it (opening symbols, outlines). `scale` sets the paper line widths.
+pub fn elevation_svg(
+    def: &TypeDefinition,
+    ev: &Evaluation,
+    model_id: &str,
+    elevation_id: Option<&str>,
+    scale: f64,
+) -> Result<String, Error> {
+    let rep = representation(def, model_id)?;
+    let (tris, mut bounds) = view_triangles(
+        def,
+        ev,
+        rep,
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    )?;
+    let mut overlay = String::new();
+    if let Some(id) = elevation_id {
+        let (defs, body, b) = draw_2d(def, ev, representation(def, id)?, scale)?;
+        if !defs.is_empty() {
+            writeln!(overlay, "<defs>\n{defs}</defs>").unwrap();
+        }
+        overlay.push_str(&body);
+        bounds.add(b.min);
+        bounds.add(b.max);
+    }
+    let mut all = if tris.is_empty() {
+        String::new()
+    } else {
+        raster_image(&tris, &bounds)
+    };
+    all.push_str(&overlay);
+    Ok(svg_document(bounds, &all, true))
+}
+
+/// Every visible triangle of a 3D representation seen along `-eye`, with its screen bounds.
+fn view_triangles(
+    def: &TypeDefinition,
+    ev: &Evaluation,
+    rep: &opo_model::Representation,
+    eye: V3,
+    right: V3,
+    up: V3,
+) -> Result<(Vec<Tri>, Bounds), Error> {
     let light = {
         let l: V3 = [
             eye[0] + 0.4 * up[0] - 0.5 * right[0],
@@ -510,7 +587,6 @@ pub fn model_svg(
         [l[0] / len, l[1] / len, l[2] / len]
     };
     let dot = |a: V3, b: V3| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    // Every visible triangle with its solid, three depths and a shaded colour.
     let mut tris: Vec<Tri> = Vec::new();
     let mut bounds = Bounds::new();
     let mut solid_no = 0u32;
@@ -525,6 +601,7 @@ pub fn model_svg(
         {
             let Some(s) = g.solid() else { continue };
             let colour = solid_colour(def, item, ev, &g);
+            let glass = solid_is_glass(def, item, ev, &g);
             let base = hex(&colour);
             solid_no += 1;
             for f in &s.faces {
@@ -550,16 +627,39 @@ pub fn model_svg(
                     depth: [a, b, c].map(|p| dot(p, eye)),
                     rgb,
                     solid: solid_no,
+                    alpha: if glass { GLASS_ALPHA } else { 1.0 },
                 });
             }
         }
     }
-    let body = if tris.is_empty() {
-        String::new()
-    } else {
-        raster_image(&tris, &bounds)
+    Ok((tris, bounds))
+}
+
+/// Opacity of glass in the 3D views.
+const GLASS_ALPHA: f64 = 0.35;
+
+/// True if a geometry's material (the item's, or the one a nested object gave it) is glass.
+fn solid_is_glass(
+    def: &TypeDefinition,
+    item: &RepresentationItem,
+    ev: &Evaluation,
+    g: &Geometry,
+) -> bool {
+    let key = match item.material.as_deref() {
+        Some(m) => material_key(m, item, ev, g),
+        None => match &g.material {
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        },
     };
-    Ok(svg_document(bounds, &body, true))
+    key.and_then(|m| {
+        def.materials
+            .iter()
+            .flatten()
+            .find(|(k, _)| **k == m)
+            .map(|(_, mat)| mat.category == opo_model::MaterialCategory::Glass)
+    })
+    .unwrap_or(false)
 }
 
 /// One visible triangle of the 3D view.
@@ -569,6 +669,8 @@ struct Tri {
     depth: [f64; 3],
     rgb: [u8; 3],
     solid: u32,
+    /// 1 for opaque parts; less for glass, drawn over the opaque parts.
+    alpha: f64,
 }
 
 /// Pixels on the longer side of the 3D image, before 2× supersampling.
@@ -586,16 +688,21 @@ fn raster_image(tris: &[Tri], b: &Bounds) -> String {
     );
     let mut depth = vec![f64::NEG_INFINITY; w * h];
     let mut id = vec![0u32; w * h];
-    let mut rgb = vec![[0u8; 3]; w * h];
-    for t in tris {
-        // Screen y grows downwards in the image.
-        let p = t
-            .screen
-            .map(|q| [(q[0] - b.min[0]) * scale, (b.max[1] - q[1]) * scale]);
+    // Colour and coverage per pixel, so glass can be blended over what is behind it.
+    let mut col = vec![[0f64; 3]; w * h];
+    let mut cover = vec![0f64; w * h];
+    let mut glass_id = vec![0u32; w * h];
+    let to_px = |t: &Tri| {
+        t.screen
+            .map(|q| [(q[0] - b.min[0]) * scale, (b.max[1] - q[1]) * scale])
+    };
+    // Visit the pixels a triangle covers, with the depth there.
+    let cover_tri = |t: &Tri, f: &mut dyn FnMut(usize, f64)| {
+        let p = to_px(t);
         let area =
             (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]);
         if area.abs() < 1e-12 {
-            continue;
+            return;
         }
         let x0 = p
             .iter()
@@ -632,27 +739,60 @@ fn raster_image(tris: &[Tri], b: &Bounds) -> String {
                 if l0 < -1e-9 || l1 < -1e-9 || l2 < -1e-9 {
                     continue;
                 }
-                let z = l0 * t.depth[0] + l1 * t.depth[1] + l2 * t.depth[2];
-                let k = y * w + x;
-                // Ties go to the part drawn first, so touching faces don't flicker.
-                if z > depth[k] + 1e-7 {
-                    depth[k] = z;
-                    id[k] = t.solid;
-                    rgb[k] = t.rgb;
-                }
+                f(
+                    y * w + x,
+                    l0 * t.depth[0] + l1 * t.depth[1] + l2 * t.depth[2],
+                );
             }
         }
+    };
+    // Opaque parts first, with the depth buffer.
+    for t in tris.iter().filter(|t| t.alpha >= 1.0) {
+        let c = t.rgb.map(f64::from);
+        cover_tri(t, &mut |k, z| {
+            // Ties go to the part drawn first, so touching faces don't flicker.
+            if z > depth[k] + 1e-7 {
+                depth[k] = z;
+                id[k] = t.solid;
+                col[k] = c;
+                cover[k] = 1.0;
+            }
+        });
+    }
+    // Then glass, far to near, blended over whatever is behind it.
+    let mut glass: Vec<&Tri> = tris.iter().filter(|t| t.alpha < 1.0).collect();
+    glass.sort_by(|p, q| {
+        let d = |t: &Tri| t.depth.iter().sum::<f64>();
+        d(p).total_cmp(&d(q))
+    });
+    for t in glass {
+        let c = t.rgb.map(f64::from);
+        let a = t.alpha;
+        cover_tri(t, &mut |k, z| {
+            if z > depth[k] + 1e-7 {
+                for i in 0..3 {
+                    col[k][i] = if cover[k] > 0.0 {
+                        (a * c[i] + (1.0 - a) * cover[k] * col[k][i]) / (a + (1.0 - a) * cover[k])
+                    } else {
+                        c[i]
+                    };
+                }
+                cover[k] = a + (1.0 - a) * cover[k];
+                glass_id[k] = t.solid;
+            }
+        });
     }
     // Outline where one part meets another or the background.
-    let edge = |k: usize, x: usize, y: usize| {
-        let me = id[k];
-        (x + 1 < w && id[k + 1] != me) || (y + 1 < h && id[k + w] != me)
+    let edge = |k: usize, x: usize| {
+        let (me, g) = (id[k], glass_id[k]);
+        (x + 1 < w && (id[k + 1] != me || glass_id[k + 1] != g))
+            || (k + w < w * h && (id[k + w] != me || glass_id[k + w] != g))
     };
     let (ow, oh) = (w.div_ceil(ss), h.div_ceil(ss));
     let mut out = vec![0u8; ow * oh * 4];
     for oy in 0..oh {
         for ox in 0..ow {
-            let (mut acc, mut n_in) = ([0f64; 4], 0f64);
+            let (mut acc, mut alpha) = ([0f64; 3], 0f64);
             for dy in 0..ss {
                 for dx in 0..ss {
                     let (x, y) = (ox * ss + dx, oy * ss + dy);
@@ -660,27 +800,23 @@ fn raster_image(tris: &[Tri], b: &Bounds) -> String {
                         continue;
                     }
                     let k = y * w + x;
-                    let line = edge(k, x, y);
-                    if id[k] == 0 && !line {
-                        continue;
-                    }
-                    let c = if line {
-                        [40.0, 40.0, 40.0]
+                    let (c, a) = if edge(k, x) {
+                        ([40.0, 40.0, 40.0], 1.0)
                     } else {
-                        rgb[k].map(f64::from)
+                        (col[k], cover[k])
                     };
-                    acc[0] += c[0];
-                    acc[1] += c[1];
-                    acc[2] += c[2];
-                    n_in += 1.0;
+                    for i in 0..3 {
+                        acc[i] += c[i] * a;
+                    }
+                    alpha += a;
                 }
             }
             let o = (oy * ow + ox) * 4;
-            if n_in > 0.0 {
+            if alpha > 0.0 {
                 for i in 0..3 {
-                    out[o + i] = (acc[i] / n_in).round() as u8;
+                    out[o + i] = (acc[i] / alpha).round() as u8;
                 }
-                out[o + 3] = (255.0 * n_in / (ss * ss) as f64).round() as u8;
+                out[o + 3] = (255.0 * alpha / (ss * ss) as f64).round() as u8;
             }
         }
     }
@@ -759,12 +895,48 @@ mod tests {
             depth: [depth; 3],
             rgb,
             solid,
+            alpha: 1.0,
         };
         let mut b = Bounds::new();
         b.add([0.0, 0.0]);
         b.add([1.0, 1.0]);
         // The near red triangle comes first; the far blue one must not cover it.
         let svg = raster_image(&[tri(1.0, [255, 0, 0], 1), tri(-1.0, [0, 0, 255], 2)], &b);
+        let (buf, w, h) = decode(&svg);
+        let k = ((h * 3 / 4) * w + w / 4) * 4;
+        assert_eq!(&buf[k..k + 4], &[255, 0, 0, 255], "red in front");
+        let corner = ((h / 8) * w + w * 7 / 8) * 4;
+        assert_eq!(buf[corner + 3], 0, "empty outside the triangle");
+    }
+
+    #[test]
+    fn glass_lets_what_is_behind_show_through() {
+        let tri = |depth: f64, rgb: [u8; 3], solid: u32, alpha: f64| Tri {
+            screen: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            depth: [depth; 3],
+            rgb,
+            solid,
+            alpha,
+        };
+        let mut b = Bounds::new();
+        b.add([0.0, 0.0]);
+        b.add([1.0, 1.0]);
+        let svg = raster_image(
+            &[
+                tri(1.0, [255, 0, 0], 1, GLASS_ALPHA),
+                tri(-1.0, [0, 0, 255], 2, 1.0),
+            ],
+            &b,
+        );
+        let (buf, w, h) = decode(&svg);
+        let k = ((h * 3 / 4) * w + w / 4) * 4;
+        let px = &buf[k..k + 4];
+        assert!(px[0] > 40 && px[0] < 140, "some red from the glass: {px:?}");
+        assert!(px[2] > 120, "the blue behind shows through: {px:?}");
+        assert_eq!(px[3], 255);
+    }
+
+    fn decode(svg: &str) -> (Vec<u8>, usize, usize) {
         let data = svg
             .split("base64,")
             .nth(1)
@@ -777,11 +949,7 @@ mod tests {
         let mut r = dec.read_info().unwrap();
         let mut buf = vec![0; r.output_buffer_size()];
         let info = r.next_frame(&mut buf).unwrap();
-        let (w, h) = (info.width as usize, info.height as usize);
-        let k = ((h * 3 / 4) * w + w / 4) * 4;
-        assert_eq!(&buf[k..k + 4], &[255, 0, 0, 255], "red in front");
-        let corner = ((h / 8) * w + w * 7 / 8) * 4;
-        assert_eq!(buf[corner + 3], 0, "empty outside the triangle");
+        (buf, info.width as usize, info.height as usize)
     }
 
     fn unbase64(s: &str) -> Vec<u8> {

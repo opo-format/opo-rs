@@ -21,7 +21,7 @@ Usage:
   opo catalogue --library ROOT [-o FILE.md]
   opo coverage --library ROOT --ifc DIR [-o FILE.md]
   opo compare FOLDER_A FOLDER_B [--ignore-generator]
-  opo render FOLDER [--root DIR] [--view plan|model] [--representation ID]
+  opo render FOLDER [--root DIR] [--view plan|model|elevation] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
 
 Commands:
@@ -256,7 +256,7 @@ fn render(args: &[String]) -> Result<bool, String> {
         let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
         match arg.as_str() {
             "--root" => root = next("a folder")?.into(),
-            "--view" => view = next("plan or model")?,
+            "--view" => view = next("plan, model or elevation")?,
             "--representation" => rep = Some(next("an id")?),
             "--scale" => {
                 scale = next("a number")?
@@ -297,7 +297,26 @@ fn render(args: &[String]) -> Result<bool, String> {
     let svg = match view.as_str() {
         "plan" => opo_render::plan_svg(&def, &ev, rep.as_deref().unwrap_or("plan.medium"), scale),
         "model" => opo_render::model_svg(&def, &ev, rep.as_deref().unwrap_or("model.medium")),
-        other => return Err(format!("--view must be plan or model, not {other}")),
+        "elevation" => {
+            // The 3D model seen from the front, with the elevation representation's 2D items
+            // (opening symbols) over it when it has any.
+            let overlay = def
+                .representation("elevation")
+                .filter(|r| r.items.as_ref().is_some_and(|i| !i.is_empty()))
+                .map(|_| "elevation");
+            opo_render::elevation_svg(
+                &def,
+                &ev,
+                rep.as_deref().unwrap_or("model.medium"),
+                overlay,
+                scale,
+            )
+        }
+        other => {
+            return Err(format!(
+                "--view must be plan, model or elevation, not {other}"
+            ));
+        }
     }
     .map_err(|e| e.to_string())?;
     match out {
