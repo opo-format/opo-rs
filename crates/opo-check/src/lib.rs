@@ -417,6 +417,17 @@ fn names(def: &TypeDefinition, errs: &mut Vec<String>) {
             if s.op == Op::Instance && k == "representation" {
                 continue;
             }
+            // Grid class rules are FEEL over the member being classed.
+            if s.op == Op::Grid && k == "classes" {
+                if let Json::Object(rules) = v {
+                    for (who, expr) in rules {
+                        let mut local = avail.clone();
+                        local.insert(who.clone());
+                        n.need(Some(expr), &format!("step {}.classes.{who}", s.id), &local);
+                    }
+                }
+                continue;
+            }
             n.need(Some(v), &format!("step {}.{k}", s.id), &avail);
         }
         done.insert(s.id.clone());

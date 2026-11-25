@@ -214,3 +214,35 @@ fn provenance_is_checked_and_to_verify_reported() {
         );
     }
 }
+
+#[test]
+fn grid_class_rules_see_their_member() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let (resolver, ifc) = options(&spec);
+    let opts = Options {
+        resolver: &resolver,
+        ifc: Some(&ifc),
+    };
+    let src = spec.join("library/templates/IfcBoiler");
+    let d = copy(&src, "grid");
+    edit(&d, |a| {
+        a["opo::recipe"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": "g", "op": "grid", "args": {
+                    "surface": "{baseline: [[0, 0], [2, 0]], base: 0, top: 2}",
+                    "u": "{pattern: [{size: 1}]}", "v": "{pattern: [{size: 1}]}",
+                    "classes": {"segment": "segment.cls", "cell": "cell.cls + no_such_name"}
+                }
+            }));
+    });
+    let r = check_dir(&d, &opts);
+    let names: Vec<&String> = r
+        .errors
+        .iter()
+        .filter(|e| e.contains("unknown names"))
+        .collect();
+    assert_eq!(names.len(), 1, "{:?}", r.errors);
+    assert!(names[0].contains("classes.cell") && names[0].contains("no_such_name"));
+}

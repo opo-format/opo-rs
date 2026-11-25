@@ -29,6 +29,12 @@ pub use eval::{Env, Scope, eval};
 pub use parser::{Expr, Source, free_names, parse};
 pub use value::{EPSILON, Foreign, Value};
 
+/// `layout(length, args)` (proposal 0001 §1) with the optional arguments in a context: the
+/// `{bays, lines}` result, or `null` for an impossible layout.
+pub fn layout(length: f64, args: &Value) -> Value {
+    layout::call(&[Value::Number(length), args.clone()]).unwrap_or(Value::Null)
+}
+
 /// Parse and evaluate an expression in one step.
 ///
 /// Prefer [`parse`] then [`eval`] when the same expression is evaluated many times.
