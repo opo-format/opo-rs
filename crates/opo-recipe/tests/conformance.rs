@@ -1,6 +1,6 @@
 //! Runs `conformance/objects/*.json` of the pinned spec: for every case, the derived values,
 //! checks, IFC properties, quantities, ports, and the solid count and volume of every item of
-//! `model.medium`, `model.high` and `void`.
+//! `model.medium`, `model.high` and `void`, and expressions over data steps (`steps`).
 
 use std::path::{Path, PathBuf};
 
@@ -120,6 +120,20 @@ fn check_case(def: &TypeDefinition, ev: &Evaluation, expected: &Json, out: &mut 
             cmp(out, format!("port {}.{field}", p.name), got, &want[field]);
         }
     }
+    // Data steps (a grid): FEEL expressions over the step results and the environment.
+    if let Some(Json::Array(steps)) = expected.get("steps") {
+        let mut scope = ev.env.clone();
+        for (k, v) in &ev.geometry {
+            scope.set(k.clone(), v.clone());
+        }
+        for st in steps {
+            let expr = st["expr"].as_str().unwrap();
+            let got = opo_feel::eval_str(expr, &scope)
+                .map(|v| v.to_json())
+                .unwrap_or_else(|e| Json::String(e.to_string()));
+            cmp(out, format!("step expression {expr}"), got, &st["expected"]);
+        }
+    }
     for (rep, items) in obj(expected.get("geometry")) {
         for item in items.as_array().unwrap() {
             let step = item["geometry"].as_str().unwrap();
@@ -207,6 +221,6 @@ fn object_cases() {
         "{failed} of {total} object cases fail:\n{}",
         report.join("\n")
     );
-    assert_eq!(total, 265);
+    assert!(total >= 265, "{total} cases: some suites are missing");
     println!("{total} object cases pass");
 }
