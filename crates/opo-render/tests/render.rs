@@ -362,3 +362,66 @@ fn a_hosted_door_cuts_its_wall() {
     }
     assert!(balanced(&svg) && svg.contains("<g transform=\"translate(0 "));
 }
+
+#[test]
+fn a_hosted_door_shows_in_elevation_section_and_3d() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: spec.clone(),
+    };
+    let wall = load_type(&spec.join("library/templates/IfcWall")).unwrap();
+    let mut win = Input::default();
+    win.inputs
+        .insert("path".into(), serde_json::json!([[-1.5, 0], [1.5, 0]]));
+    let wev = run(&wall, &win, &opo_recipe::NoNesting).unwrap();
+    let host = opo_recipe::host::provides(&wall, &wev).unwrap();
+    let door = load_type(&spec.join("examples/door/single-swing-door")).unwrap();
+    let din = Input {
+        context: opo_recipe::host::hosted_context(&host),
+        ..Input::default()
+    };
+    let dev = run(&door, &din, &resolver).unwrap();
+    let parts = opo_recipe::host::hosted_model(
+        &wall,
+        &wev,
+        "layer_solids",
+        &door,
+        &dev,
+        "model.medium",
+        0.0,
+        false,
+        None,
+    )
+    .unwrap();
+    let host_parts = parts.iter().filter(|p| p.from_host).count();
+    assert_eq!(host_parts, 3, "one seamless solid per wall layer");
+    assert!(parts.iter().any(|p| !p.from_host), "the door's solids");
+    for v in [
+        opo_render::HostedView::Model,
+        opo_render::HostedView::Elevation,
+        opo_render::HostedView::Section,
+    ] {
+        let svg = opo_render::hosted_view_svg(
+            &wall,
+            &wev,
+            "layer_solids",
+            &door,
+            &dev,
+            "model.medium",
+            0.0,
+            v,
+            50.0,
+        )
+        .unwrap();
+        assert!(balanced(&svg), "{v:?}");
+        if v == opo_render::HostedView::Section {
+            assert!(
+                svg.contains("fill=\"#ffffff\""),
+                "cut regions in the section"
+            );
+        } else {
+            assert!(svg.contains("<image"), "{v:?} is shaded");
+        }
+    }
+}

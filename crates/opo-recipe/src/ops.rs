@@ -562,7 +562,7 @@ fn transform_3d(
 
 // ------------------------------------------------------------------ 3D helpers
 
-fn extrude(profile: &Value, lo: f64, hi: f64) -> Result<Value, Error> {
+pub(crate) fn extrude(profile: &Value, lo: f64, hi: f64) -> Result<Value, Error> {
     let mut out = Vec::new();
     for (plane, shape) in regions(profile)? {
         for poly in &shape {

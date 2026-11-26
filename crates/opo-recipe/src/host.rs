@@ -283,6 +283,208 @@ pub fn cut_host_plan(
     Ok(out)
 }
 
+/// A solid of a host-and-hosted model, with its material key.
+#[derive(Debug, Clone)]
+pub struct ModelPart {
+    /// The solid, in host coordinates.
+    pub solid: Solid,
+    /// Material key.
+    pub material: Option<String>,
+    /// True for the host's pieces, false for the hosted object's.
+    pub from_host: bool,
+}
+
+fn prism(shape: &MultiPolygon<f64>, lo: f64, hi: f64) -> Result<Vec<Solid>, Error> {
+    if shape.0.is_empty() || hi - lo < 1e-9 {
+        return Ok(Vec::new());
+    }
+    let region = crate::geometry::Geometry::new(crate::geometry::Shape::Region {
+        plane: crate::geometry::Plane::Xy,
+        shape: shape.clone(),
+    })
+    .into_value();
+    let v = crate::ops::extrude(&region, lo, hi)?;
+    Ok(crate::geometry::flatten(&v)?
+        .iter()
+        .filter_map(|g| g.solid().cloned())
+        .collect())
+}
+
+/// The 3D model of a host with one hosted object at `x` (proposal 0004), for views of the
+/// pair: each host layer split around the hosted object's void (left, right, below and
+/// above it), the layers its reveal rules return lining the void's sides when `reveals_on`,
+/// and the hosted object's solids of `hosted_model` moved onto their seat. Straight hosts
+/// along +x with box-shaped voids; applications with a solid modeller subtract the void.
+/// With `drawing`, the hosted object's parts follow the level-of-detail table for that view.
+#[allow(clippy::too_many_arguments)]
+pub fn hosted_model(
+    host_def: &TypeDefinition,
+    host_ev: &Evaluation,
+    layer_step: &str,
+    hosted_def: &TypeDefinition,
+    hosted_ev: &Evaluation,
+    hosted_model: &str,
+    x: f64,
+    reveals_on: bool,
+    drawing: Option<(opo_model::DrawingView, &opo_model::LodTable)>,
+) -> Result<Vec<ModelPart>, Error> {
+    let host = provides(host_def, host_ev)?;
+    let seat = seat_y(hosted_def, hosted_ev, &host);
+    let void_step = hosted_def
+        .host
+        .as_ref()
+        .and_then(|hh| hh.void.as_ref())
+        .and_then(|v| v.get("geometry"))
+        .and_then(Json::as_str)
+        .unwrap_or("void");
+    let (mut v0, mut v1) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for g in hosted_ev.items(void_step)? {
+        if let Some(s) = g.solid() {
+            for p in &translated(s, [x, seat, 0.0]).points {
+                for k in 0..3 {
+                    v0[k] = v0[k].min(p[k]);
+                    v1[k] = v1[k].max(p[k]);
+                }
+            }
+        }
+    }
+    let rules = if reveals_on {
+        reveals(hosted_def, hosted_ev, &host, seat)
+    } else {
+        Vec::new()
+    };
+    let functions: Vec<Option<String>> = host
+        .get("layers")
+        .and_then(Json::as_array)
+        .map(|ls| {
+            ls.iter()
+                .map(|l| l.get("function").and_then(Json::as_str).map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let item = opo_model::RepresentationItem {
+        geometry: layer_step.into(),
+        material: Some("each.material".into()),
+        hatch: None,
+        class: None,
+        role: None,
+        part: None,
+        category: None,
+    };
+    let mut out = Vec::new();
+    for (i, g) in host_ev.items(layer_step)?.iter().enumerate() {
+        let Some(s) = g.solid() else { continue };
+        let material = match resolve_material(&item, &host_ev.env, g)? {
+            Some(opo_feel::Value::String(k)) if !k.is_empty() => Some(k),
+            _ => None,
+        };
+        let (zb, zt) = s
+            .points
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
+                (a.min(p[2]), b.max(p[2]))
+            });
+        let plan = section(s, (zb + zt) / 2.0);
+        let ext = |f: fn(&geo::Coord<f64>) -> f64| {
+            plan.0
+                .iter()
+                .flat_map(|p| p.exterior().coords())
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), c| {
+                    (a.min(f(c)), b.max(f(c)))
+                })
+        };
+        let ((lx0, lx1), (ly0, ly1)) = (ext(|c| c.x), ext(|c| c.y));
+        // The layer's face in elevation (x, z) minus the void, made thick along y: one solid
+        // per layer, so no seams show.
+        let mut face = rectangle(lx0, zb, lx1, zt);
+        if v0[0] < v1[0] {
+            face = face.difference(&rectangle(v0[0], v0[2], v1[0], v1[2]));
+        }
+        let mut solids = Vec::new();
+        if !face.0.is_empty() && ly1 - ly0 > 1e-9 {
+            let region = crate::geometry::Geometry::new(crate::geometry::Shape::Region {
+                plane: crate::geometry::Plane::Xz,
+                shape: face,
+            })
+            .into_value();
+            let v = crate::ops::extrude(&region, ly0, ly1)?;
+            solids.extend(
+                crate::geometry::flatten(&v)?
+                    .iter()
+                    .filter_map(|g| g.solid().cloned()),
+            );
+        }
+        if v0[0] < v1[0]
+            && let Some(r) = rules
+                .iter()
+                .find(|r| Some(&r.function) == functions.get(i).and_then(|f| f.as_ref()))
+        {
+            let t = ly1 - ly0;
+            let to_y = match r.to {
+                Target::Plane(y) => y,
+                Target::Frame(_, front) if ly0 >= front - 1e-9 => front,
+                Target::Frame(back, _) => back,
+            };
+            let span = if to_y < ly0 - 1e-9 {
+                Some((to_y, ly0))
+            } else if to_y > ly1 + 1e-9 {
+                Some((ly1, to_y))
+            } else {
+                None
+            };
+            if let Some((y0, y1)) = span {
+                for (a, b) in [(v0[0], v0[0] + t), (v1[0] - t, v1[0])] {
+                    solids.extend(prism(
+                        &rectangle(a, y0, b, y1),
+                        v0[2].max(zb),
+                        v1[2].min(zt),
+                    )?);
+                }
+            }
+        }
+        for solid in solids {
+            out.push(ModelPart {
+                solid,
+                material: material.clone(),
+                from_host: true,
+            });
+        }
+    }
+    let rep = hosted_def
+        .representation(hosted_model)
+        .ok_or_else(|| Error::Op(format!("no representation {hosted_model}")))?;
+    for item in rep.items.iter().flatten() {
+        let hidden = drawing.is_some_and(|(v, t)| {
+            t.resolve(item.category, v, rep.lod, None) != opo_model::Visibility::Show
+        });
+        if hidden || item.role.as_deref() == Some("void") {
+            continue;
+        }
+        for g in hosted_ev.items(&item.geometry)? {
+            let Some(s) = g.solid() else { continue };
+            let material = match resolve_material(item, &hosted_ev.env, &g)? {
+                Some(opo_feel::Value::String(k)) if !k.is_empty() => Some(k),
+                _ => None,
+            };
+            out.push(ModelPart {
+                solid: translated(s, [x, seat, 0.0]),
+                material,
+                from_host: false,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Turn a solid so that a horizontal cut at height `h` of the result is the vertical cut at
+/// x = −`h` of the original, seen looking towards +x: (x, y, z) becomes (−y, z, −x).
+pub fn for_x_section(s: &Solid) -> Solid {
+    Solid::new(
+        s.points.iter().map(|p| [-p[1], p[2], -p[0]]).collect(),
+        s.faces.clone(),
+    )
+}
+
 fn rectangle(x0: f64, y0: f64, x1: f64, y1: f64) -> MultiPolygon<f64> {
     use geo::{LineString, Polygon};
     MultiPolygon(vec![Polygon::new(

@@ -316,19 +316,41 @@ fn render(args: &[String]) -> Result<bool, String> {
         let provided = opo_recipe::host::provides(&hdef, &hev).map_err(|e| e.to_string())?;
         input.context = opo_recipe::host::hosted_context(&provided);
         let ev = opo_recipe::run(&def, &input, &resolver).map_err(|e| e.to_string())?;
-        if view != "plan" {
-            return Err("--in draws plans only for now".into());
+        let svg = match view.as_str() {
+            "plan" => opo_render::hosted_plan_svg(
+                &hdef,
+                &hev,
+                "layer_solids",
+                &def,
+                &ev,
+                rep.as_deref().unwrap_or("plan.medium"),
+                at,
+                scale,
+            ),
+            v => {
+                let kind = match v {
+                    "model" => opo_render::HostedView::Model,
+                    "elevation" => opo_render::HostedView::Elevation,
+                    "section" => opo_render::HostedView::Section,
+                    other => {
+                        return Err(format!(
+                            "--view must be plan, model, elevation or section, not {other}"
+                        ));
+                    }
+                };
+                opo_render::hosted_view_svg(
+                    &hdef,
+                    &hev,
+                    "layer_solids",
+                    &def,
+                    &ev,
+                    rep.as_deref().unwrap_or("model.medium"),
+                    at,
+                    kind,
+                    scale,
+                )
+            }
         }
-        let svg = opo_render::hosted_plan_svg(
-            &hdef,
-            &hev,
-            "layer_solids",
-            &def,
-            &ev,
-            rep.as_deref().unwrap_or("plan.medium"),
-            at,
-            scale,
-        )
         .map_err(|e| e.to_string())?;
         match out {
             Some(f) => std::fs::write(&f, svg).map_err(|e| format!("{}: {e}", f.display()))?,

@@ -20,7 +20,7 @@ mod run;
 
 use std::fmt;
 
-pub use geo::MultiPolygon;
+pub use geo::{BooleanOps, MultiPolygon};
 pub use geometry::{Geometry, Plane, Shape, Solid, flatten};
 pub use run::{Evaluation, Input, MAX_DEPTH, NoNesting, Resolver, resolve_material, run};
 
