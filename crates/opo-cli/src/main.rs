@@ -23,6 +23,7 @@ Usage:
   opo compare FOLDER_A FOLDER_B [--ignore-generator]
   opo render FOLDER [--root DIR] [--view plan|model|elevation] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
+             [--in HOST_FOLDER [--at X] [--host-values JSON] [--host-inputs JSON]]
 
 Commands:
   check   Validate unpacked object folders (object.ifcx + layers/): schema, names,
@@ -251,6 +252,8 @@ fn render(args: &[String]) -> Result<bool, String> {
         None::<PathBuf>,
         None::<PathBuf>,
     );
+    let (mut host, mut host_values, mut host_inputs, mut at) =
+        (None::<PathBuf>, None::<String>, None::<String>, 0.0);
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut next = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}"));
@@ -266,6 +269,14 @@ fn render(args: &[String]) -> Result<bool, String> {
             "--values" => values = Some(next("a JSON object")?),
             "--inputs" => inputs = Some(next("a JSON object")?),
             "-o" => out = Some(next("a file")?.into()),
+            "--in" => host = Some(next("a host object folder")?.into()),
+            "--host-values" => host_values = Some(next("a JSON object")?),
+            "--host-inputs" => host_inputs = Some(next("a JSON object")?),
+            "--at" => {
+                at = next("a number")?
+                    .parse()
+                    .map_err(|_| "--at needs a number".to_owned())?
+            }
             s if s.starts_with('-') => return Err(format!("unknown option {s}")),
             s if folder.is_none() => folder = Some(s.into()),
             s => return Err(format!("unexpected argument {s}")),
@@ -283,7 +294,7 @@ fn render(args: &[String]) -> Result<bool, String> {
             },
         }
     };
-    let input = opo_recipe::Input {
+    let mut input = opo_recipe::Input {
         values: json_map(values, "--values")?,
         inputs: json_map(inputs, "--inputs")?,
         ..Default::default()
@@ -293,6 +304,38 @@ fn render(args: &[String]) -> Result<bool, String> {
         prefix: "opo-format.org/".into(),
         root,
     };
+    // In a host (proposal 0004): run the host, pass its values to the object, draw both.
+    if let Some(hf) = host {
+        let hdef = opo_check::load_type(&hf)?;
+        let hin = opo_recipe::Input {
+            values: json_map(host_values, "--host-values")?,
+            inputs: json_map(host_inputs, "--host-inputs")?,
+            ..Default::default()
+        };
+        let hev = opo_recipe::run(&hdef, &hin, &resolver).map_err(|e| e.to_string())?;
+        let provided = opo_recipe::host::provides(&hdef, &hev).map_err(|e| e.to_string())?;
+        input.context = opo_recipe::host::hosted_context(&provided);
+        let ev = opo_recipe::run(&def, &input, &resolver).map_err(|e| e.to_string())?;
+        if view != "plan" {
+            return Err("--in draws plans only for now".into());
+        }
+        let svg = opo_render::hosted_plan_svg(
+            &hdef,
+            &hev,
+            "layer_solids",
+            &def,
+            &ev,
+            rep.as_deref().unwrap_or("plan.medium"),
+            at,
+            scale,
+        )
+        .map_err(|e| e.to_string())?;
+        match out {
+            Some(f) => std::fs::write(&f, svg).map_err(|e| format!("{}: {e}", f.display()))?,
+            None => print!("{svg}"),
+        }
+        return Ok(true);
+    }
     let ev = opo_recipe::run(&def, &input, &resolver).map_err(|e| e.to_string())?;
     let svg = match view.as_str() {
         "plan" => opo_render::plan_svg(&def, &ev, rep.as_deref().unwrap_or("plan.medium"), scale),

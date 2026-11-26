@@ -80,7 +80,8 @@ pub fn run(
     .run(def, &input.values, &input.inputs)
 }
 
-/// The default context: a 0.2 m host from −0.1 to 0.1 m and 3 m high, a 3 m storey, a 1.2 m
+/// The default context: a 0.2 m host of one structure layer from −0.1 to 0.1 m and 3 m high
+/// (the proposal 0004 names, plus the older y_min, y_max, bottom and top), a 3 m storey, a 1.2 m
 /// plan cut, no rule sets, each flip axis at its first declared value (conformance/README.md).
 fn environment(
     def: &TypeDefinition,
@@ -118,7 +119,7 @@ fn environment(
         }
     }
 
-    let mut host = serde_json::json!({"thickness": 0.2, "y_min": -0.1, "y_max": 0.1, "bottom": 0.0, "top": 3.0});
+    let mut host = crate::host::default_host();
     for (k, decl) in def
         .host
         .as_ref()

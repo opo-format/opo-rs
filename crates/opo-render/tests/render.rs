@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use opo_check::{DirResolver, load_type};
 use opo_recipe::{Input, run};
-use opo_render::{elevation_svg, model_svg, plan_svg, solid_colour};
+use opo_render::{elevation_svg, hosted_plan_svg, model_svg, plan_svg, solid_colour};
 
 fn spec_dir() -> PathBuf {
     std::env::var_os("OPO_SPEC_DIR")
@@ -313,4 +313,52 @@ fn def_items_with_finish(
         item(opo_model::PartCategory::Structure),
         item(opo_model::PartCategory::Finish),
     ])
+}
+
+#[test]
+fn a_hosted_door_cuts_its_wall() {
+    // Proposal 0004: the wall's plan loses the door's void; the door is drawn on its seat.
+    let spec = spec_dir().join("conformance/fixtures");
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: spec.clone(),
+    };
+    let wall = load_type(&spec.join("library/templates/IfcWall")).unwrap();
+    let mut win = Input::default();
+    win.inputs
+        .insert("path".into(), serde_json::json!([[-1.5, 0], [1.5, 0]]));
+    let wev = run(&wall, &win, &opo_recipe::NoNesting).unwrap();
+    let host = opo_recipe::host::provides(&wall, &wev).unwrap();
+    let door = load_type(&spec.join("examples/door/single-swing-door")).unwrap();
+    let din = Input {
+        context: opo_recipe::host::hosted_context(&host),
+        ..Input::default()
+    };
+    let dev = run(&door, &din, &resolver).unwrap();
+    let regions =
+        opo_recipe::host::cut_host_plan(&wall, &wev, "layer_solids", &door, &dev, 0.0, true, false)
+            .unwrap();
+    assert!(
+        regions.iter().all(|r| r.shape.0.len() == 2),
+        "each layer is split in two by the opening"
+    );
+    let merged =
+        opo_recipe::host::cut_host_plan(&wall, &wev, "layer_solids", &door, &dev, 0.0, false, true)
+            .unwrap();
+    assert_eq!(merged.len(), 1, "at low detail the wall is one region");
+    let svg = hosted_plan_svg(
+        &wall,
+        &wev,
+        "layer_solids",
+        &door,
+        &dev,
+        "plan.medium",
+        0.0,
+        50.0,
+    )
+    .unwrap();
+    if let Some(dir) = std::env::var_os("OPO_RENDER_OUT") {
+        std::fs::write(PathBuf::from(dir).join("wall-with-door.svg"), &svg).unwrap();
+    }
+    assert!(balanced(&svg) && svg.contains("<g transform=\"translate(0 "));
 }
