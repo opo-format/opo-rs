@@ -174,6 +174,8 @@ fn union_all<'a>(shapes: impl IntoIterator<Item = &'a MultiPolygon<f64>>) -> Mul
 fn display(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
+        // Whole numbers without a decimal point (a tread number reads "7", not "7.0").
+        Value::Number(x) if x.fract() == 0.0 && x.abs() < 1e15 => format!("{}", *x as i64),
         other => other.to_json().to_string(),
     }
 }
@@ -878,6 +880,13 @@ mod tests {
         let path = V::List(vec![pt(&[1.0, 1.0]), pt(&[1.0, 1.0])]);
         let b = apply(Op::Band, Plane::Xy, &[path, n(0.1), n(-0.1)]).unwrap();
         assert_eq!(area(&b), 0.0);
+    }
+
+    #[test]
+    fn text_shows_whole_numbers_without_decimals() {
+        assert_eq!(display(&n(7.0)), "7");
+        assert_eq!(display(&n(2.5)), "2.5");
+        assert_eq!(display(&V::String("UP".into())), "UP");
     }
 
     #[test]
