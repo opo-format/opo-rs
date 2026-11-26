@@ -347,7 +347,16 @@ pub fn plan_svg(
     let rep = representation(def, representation_id)?;
     let (mut defs, mut body, mut bounds) = (String::new(), String::new(), Bounds::new());
     if let Some(d) = &rep.derive {
-        derived_plan(def, ev, d, scale, &mut defs, &mut body, &mut bounds)?;
+        derived_plan(
+            def,
+            ev,
+            d,
+            rep.lod == opo_model::Lod::Low,
+            scale,
+            &mut defs,
+            &mut body,
+            &mut bounds,
+        )?;
     }
     let (d2, b2, bb) = draw_2d(def, ev, rep, scale, false)?;
     defs.push_str(&d2);
@@ -366,10 +375,12 @@ pub fn plan_svg(
 
 /// A plan derived from a 3D representation (spec §4.6): the cut through its solids at the
 /// view's cut height, hatched by material, and the edges below the cut seen from above.
+#[allow(clippy::too_many_arguments)]
 fn derived_plan(
     def: &TypeDefinition,
     ev: &Evaluation,
     d: &opo_model::Derive,
+    poche: bool,
     scale: f64,
     defs: &mut String,
     body: &mut String,
@@ -419,11 +430,12 @@ fn derived_plan(
         for (s, hatch) in &solids {
             let shape = opo_recipe::derive::section(s, h);
             if !shape.0.is_empty() {
-                // White under the cut so the edges below it do not show through.
-                region_fill(&shape, body);
+                // White under the cut so the edges below it do not show through; at low
+                // detail (small scales) cut solids are filled solid instead of hatched.
+                region_fill(&shape, body, if poche { POCHE } else { "#ffffff" });
                 region_svg(
                     &shape,
-                    hatch.as_ref(),
+                    if poche { None } else { hatch.as_ref() },
                     &p,
                     scale,
                     defs,
@@ -437,8 +449,11 @@ fn derived_plan(
     Ok(())
 }
 
-/// A white fill under a cut region.
-fn region_fill(shape: &opo_recipe::MultiPolygon<f64>, body: &mut String) {
+/// Fill of cut solids in a low-detail derived plan (poché).
+const POCHE: &str = "#3c3c3c";
+
+/// A plain fill under or of a cut region.
+fn region_fill(shape: &opo_recipe::MultiPolygon<f64>, body: &mut String, colour: &str) {
     let mut d = String::new();
     for poly in shape {
         for ring in std::iter::once(poly.exterior()).chain(poly.interiors()) {
@@ -448,7 +463,7 @@ fn region_fill(shape: &opo_recipe::MultiPolygon<f64>, body: &mut String) {
     }
     writeln!(
         body,
-        "<path d=\"{}\" fill=\"#ffffff\" fill-rule=\"evenodd\" stroke=\"none\"/>",
+        "<path d=\"{}\" fill=\"{colour}\" fill-rule=\"evenodd\" stroke=\"none\"/>",
         d.trim_end()
     )
     .unwrap();

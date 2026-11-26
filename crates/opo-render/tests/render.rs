@@ -197,4 +197,13 @@ fn derived_plan_is_cut_from_the_model() {
         svg.contains("stroke-width=\"0.0175\""),
         "cut lines are 0.35 mm at 1:50"
     );
+    // At low detail the cut is filled solid (poché).
+    let rep = def
+        .representations
+        .iter_mut()
+        .find(|r| r.id == "plan.medium")
+        .unwrap();
+    rep.lod = opo_model::Lod::Low;
+    let low = plan_svg(&def, &ev, "plan.medium", 200.0).unwrap();
+    assert!(low.contains("fill=\"#3c3c3c\"") && !low.contains("<clipPath"));
 }
