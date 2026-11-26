@@ -74,55 +74,6 @@ pub fn hosted_context(host: &Map<String, Json>) -> Map<String, Json> {
     c
 }
 
-/// A reveal rule of a hosted object (proposal 0004).
-#[derive(Debug, Clone, PartialEq)]
-struct Reveal {
-    function: String,
-    /// The plane a layer returns to: a fixed y, or the frame's back and front faces (a layer
-    /// behind the frame returns to its back face, one in front to its front face).
-    to: Target,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Target {
-    Plane(f64),
-    Frame(f64, f64),
-}
-
-fn reveals(
-    def: &TypeDefinition,
-    ev: &Evaluation,
-    host: &Map<String, Json>,
-    seat: f64,
-) -> Vec<Reveal> {
-    let Some(list) = def
-        .host
-        .as_ref()
-        .and_then(|h| h.extra.get("reveal"))
-        .and_then(Json::as_array)
-    else {
-        return Vec::new();
-    };
-    list.iter()
-        .filter(|r| r.get("rule").and_then(Json::as_str) == Some("return"))
-        .filter_map(|r| {
-            let function = r.get("function")?.as_str()?.to_owned();
-            let to = r.get("to").and_then(Json::as_str).unwrap_or("axis");
-            let target = if to == "frame" {
-                let e = r.get("frame_y")?.as_str()?;
-                let d = ev.eval(e).ok()?.to_json().as_f64()?.abs();
-                Target::Frame(seat - d, seat + d)
-            } else {
-                Target::Plane(plane_y(to, host))
-            };
-            Some(Reveal {
-                function,
-                to: target,
-            })
-        })
-        .collect()
-}
-
 /// Move a solid.
 pub fn translated(s: &Solid, d: [f64; 3]) -> Solid {
     Solid {
@@ -147,10 +98,9 @@ pub struct HostRegion {
 }
 
 /// The host's plan cut at the view's cut height with a hosted object at `x` along it: each
-/// layer of the host (`opo::host.provides.layers`, in order back to front, matched to the
-/// host's layer solids) minus the hosted object's void, and, when `reveals` is true, the
-/// layers the object's reveal rules return drawn into the reveal. At `merge`, all layers are
-/// one region with the core's material (low detail).
+/// layer of the host (`opo::host.provides.layers`, front to back, matched to the host's layer
+/// solids) minus the hosted object's void; openings cut the host square (decision 0028). At
+/// `merge`, all layers are one region with the core's material (low detail).
 #[allow(clippy::too_many_arguments)]
 pub fn cut_host_plan(
     host_def: &TypeDefinition,
@@ -159,7 +109,6 @@ pub fn cut_host_plan(
     hosted_def: &TypeDefinition,
     hosted_ev: &Evaluation,
     x: f64,
-    reveals_on: bool,
     merge: bool,
 ) -> Result<Vec<HostRegion>, Error> {
     let host = provides(host_def, host_ev)?;
@@ -211,57 +160,10 @@ pub fn cut_host_plan(
             function: functions.get(i).cloned().flatten(),
         });
     }
-    // The void's sides along x, for reveal returns.
-    let (vx0, vx1) = void
-        .0
-        .iter()
-        .flat_map(|p| p.exterior().coords())
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), c| {
-            (a.min(c.x), b.max(c.x))
-        });
-    let rules = if reveals_on {
-        reveals(hosted_def, hosted_ev, &host, seat)
-    } else {
-        Vec::new()
-    };
     let mut out = Vec::new();
     for l in &layers {
-        let mut shape = l.shape.difference(&void);
-        if vx0 < vx1
-            && let Some(r) = rules
-                .iter()
-                .find(|r| Some(&r.function) == l.function.as_ref())
-        {
-            let (ly0, ly1) = l
-                .shape
-                .0
-                .iter()
-                .flat_map(|p| p.exterior().coords())
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), c| {
-                    (a.min(c.y), b.max(c.y))
-                });
-            let t = ly1 - ly0;
-            let to_y = match r.to {
-                Target::Plane(y) => y,
-                Target::Frame(_, front) if ly0 >= front - 1e-9 => front,
-                Target::Frame(back, _) => back,
-            };
-            let span = if to_y < ly0 - 1e-9 {
-                Some((to_y, ly0))
-            } else if to_y > ly1 + 1e-9 {
-                Some((ly1, to_y))
-            } else {
-                None
-            };
-            if let Some((y0, y1)) = span {
-                for (a, b) in [(vx0, vx0 + t), (vx1 - t, vx1)] {
-                    let rect = rectangle(a, y0, b, y1);
-                    shape = shape.union(&rect);
-                }
-            }
-        }
         out.push(HostRegion {
-            shape,
+            shape: l.shape.difference(&void),
             material: l.material.clone(),
             function: l.function.clone(),
         });
@@ -294,27 +196,11 @@ pub struct ModelPart {
     pub from_host: bool,
 }
 
-fn prism(shape: &MultiPolygon<f64>, lo: f64, hi: f64) -> Result<Vec<Solid>, Error> {
-    if shape.0.is_empty() || hi - lo < 1e-9 {
-        return Ok(Vec::new());
-    }
-    let region = crate::geometry::Geometry::new(crate::geometry::Shape::Region {
-        plane: crate::geometry::Plane::Xy,
-        shape: shape.clone(),
-    })
-    .into_value();
-    let v = crate::ops::extrude(&region, lo, hi)?;
-    Ok(crate::geometry::flatten(&v)?
-        .iter()
-        .filter_map(|g| g.solid().cloned())
-        .collect())
-}
-
 /// The 3D model of a host with one hosted object at `x` (proposal 0004), for views of the
-/// pair: each host layer split around the hosted object's void (left, right, below and
-/// above it), the layers its reveal rules return lining the void's sides when `reveals_on`,
-/// and the hosted object's solids of `hosted_model` moved onto their seat. Straight hosts
-/// along +x with box-shaped voids; applications with a solid modeller subtract the void.
+/// pair: the host as one solid with the hosted object's void cut out square (decision 0028),
+/// or, with `layers`, one solid per layer (for hatching a section by layer), and the hosted
+/// object's solids of `hosted_model` moved onto their seat. Straight hosts along +x with
+/// box-shaped voids; applications with a solid modeller subtract the void.
 /// With `drawing`, the hosted object's parts follow the level-of-detail table for that view.
 #[allow(clippy::too_many_arguments)]
 pub fn hosted_model(
@@ -325,7 +211,7 @@ pub fn hosted_model(
     hosted_ev: &Evaluation,
     hosted_model: &str,
     x: f64,
-    reveals_on: bool,
+    layers: bool,
     drawing: Option<(opo_model::DrawingView, &opo_model::LodTable)>,
 ) -> Result<Vec<ModelPart>, Error> {
     let host = provides(host_def, host_ev)?;
@@ -348,11 +234,6 @@ pub fn hosted_model(
             }
         }
     }
-    let rules = if reveals_on {
-        reveals(hosted_def, hosted_ev, &host, seat)
-    } else {
-        Vec::new()
-    };
     let functions: Vec<Option<String>> = host
         .get("layers")
         .and_then(Json::as_array)
@@ -372,6 +253,7 @@ pub fn hosted_model(
         category: None,
     };
     let mut out = Vec::new();
+    let mut bands = Vec::new();
     for (i, g) in host_ev.items(layer_step)?.iter().enumerate() {
         let Some(s) = g.solid() else { continue };
         let material = match resolve_material(&item, &host_ev.env, g)? {
@@ -394,55 +276,55 @@ pub fn hosted_model(
                 })
         };
         let ((lx0, lx1), (ly0, ly1)) = (ext(|c| c.x), ext(|c| c.y));
-        // The layer's face in elevation (x, z) minus the void, made thick along y: one solid
-        // per layer, so no seams show.
+        // The layer's face in elevation (x, z) minus the void, made thick along y.
         let mut face = rectangle(lx0, zb, lx1, zt);
         if v0[0] < v1[0] {
             face = face.difference(&rectangle(v0[0], v0[2], v1[0], v1[2]));
         }
-        let mut solids = Vec::new();
-        if !face.0.is_empty() && ly1 - ly0 > 1e-9 {
-            let region = crate::geometry::Geometry::new(crate::geometry::Shape::Region {
-                plane: crate::geometry::Plane::Xz,
-                shape: face,
-            })
-            .into_value();
-            let v = crate::ops::extrude(&region, ly0, ly1)?;
-            solids.extend(
-                crate::geometry::flatten(&v)?
-                    .iter()
-                    .filter_map(|g| g.solid().cloned()),
-            );
+        bands.push((
+            face,
+            ly0,
+            ly1,
+            material,
+            functions.get(i).cloned().flatten(),
+        ));
+    }
+    let slab = |face: MultiPolygon<f64>, y0: f64, y1: f64| -> Result<Vec<Solid>, Error> {
+        if face.0.is_empty() || y1 - y0 < 1e-9 {
+            return Ok(Vec::new());
         }
-        if v0[0] < v1[0]
-            && let Some(r) = rules
-                .iter()
-                .find(|r| Some(&r.function) == functions.get(i).and_then(|f| f.as_ref()))
-        {
-            let t = ly1 - ly0;
-            let to_y = match r.to {
-                Target::Plane(y) => y,
-                Target::Frame(_, front) if ly0 >= front - 1e-9 => front,
-                Target::Frame(back, _) => back,
-            };
-            let span = if to_y < ly0 - 1e-9 {
-                Some((to_y, ly0))
-            } else if to_y > ly1 + 1e-9 {
-                Some((ly1, to_y))
-            } else {
-                None
-            };
-            if let Some((y0, y1)) = span {
-                for (a, b) in [(v0[0], v0[0] + t), (v1[0] - t, v1[0])] {
-                    solids.extend(prism(
-                        &rectangle(a, y0, b, y1),
-                        v0[2].max(zb),
-                        v1[2].min(zt),
-                    )?);
-                }
+        let region = crate::geometry::Geometry::new(crate::geometry::Shape::Region {
+            plane: crate::geometry::Plane::Xz,
+            shape: face,
+        })
+        .into_value();
+        let v = crate::ops::extrude(&region, y0, y1)?;
+        Ok(crate::geometry::flatten(&v)?
+            .iter()
+            .filter_map(|g| g.solid().cloned())
+            .collect())
+    };
+    if layers {
+        for (face, y0, y1, material, _) in bands {
+            for solid in slab(face, y0, y1)? {
+                out.push(ModelPart {
+                    solid,
+                    material: material.clone(),
+                    from_host: true,
+                });
             }
         }
-        for solid in solids {
+    } else if let Some(first) = bands.first() {
+        // One closed solid; its material is the core's.
+        let y0 = bands.iter().map(|b| b.1).fold(f64::INFINITY, f64::min);
+        let y1 = bands.iter().map(|b| b.2).fold(f64::NEG_INFINITY, f64::max);
+        let material = bands
+            .iter()
+            .find(|b| b.4.as_deref() == Some("structure"))
+            .unwrap_or(first)
+            .3
+            .clone();
+        for solid in slab(first.0.clone(), y0, y1)? {
             out.push(ModelPart {
                 solid,
                 material: material.clone(),
