@@ -14,6 +14,7 @@ pub mod derive;
 mod geometry;
 mod grid;
 pub mod host;
+pub mod joins;
 mod mesh;
 mod ops;
 mod run;

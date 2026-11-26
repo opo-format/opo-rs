@@ -423,6 +423,13 @@ fn point(c: &[f64]) -> Value {
 
 // ------------------------------------------------------------------ 2D helpers
 
+/// The band between two offsets of an open polyline (as the `band` operation).
+pub(crate) fn band_region(path: &[[f64; 2]], left: f64, right: f64) -> MultiPolygon<f64> {
+    let mut ring = offset(path, left);
+    ring.extend(offset(path, right).into_iter().rev());
+    normalise(&[polygon(&ring)])
+}
+
 /// Offset an open polyline by `d` (positive = left of the direction of travel) with mitred
 /// joins; a join longer than 10 × |d| is bevelled.
 fn offset(path: &[[f64; 2]], d: f64) -> Vec<[f64; 2]> {
