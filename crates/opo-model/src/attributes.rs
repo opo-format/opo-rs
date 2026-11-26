@@ -876,6 +876,7 @@ pub enum PartCategory {
     Membrane,
     Frame,
     Leaf,
+    Sash,
     Glass,
     Panel,
     Trim,
@@ -948,13 +949,14 @@ impl Default for LodTable {
         use PartCategory as C;
         use Visibility::{Hide as H, Show as S, Symbol as Y};
         // Plan low, medium, high; section and elevation low, medium, high.
-        let rows: [(C, [Visibility; 6]); 15] = [
+        let rows: [(C, [Visibility; 6]); 16] = [
             (C::Structure, [S, S, S, S, S, S]),
             (C::Insulation, [H, S, S, H, S, S]),
             (C::Finish, [H, S, S, H, S, S]),
             (C::Membrane, [H, H, S, H, H, S]),
             (C::Frame, [S, S, S, S, S, S]),
-            (C::Leaf, [Y, Y, Y, H, S, S]),
+            (C::Leaf, [Y, Y, Y, S, S, S]),
+            (C::Sash, [Y, Y, Y, H, S, S]),
             (C::Glass, [S, S, S, S, S, S]),
             (C::Panel, [S, S, S, S, S, S]),
             (C::Trim, [H, H, S, H, S, S]),
@@ -1388,8 +1390,9 @@ mod lod_table_tests {
         let t = LodTable::default();
         let (p, s) = (DrawingView::Plan, DrawingView::SectionElevation);
         assert_eq!(t.get(PartCategory::Leaf, p, Lod::Low), Visibility::Symbol);
-        assert_eq!(t.get(PartCategory::Leaf, s, Lod::Low), Visibility::Hide);
-        assert_eq!(t.get(PartCategory::Leaf, s, Lod::Medium), Visibility::Show);
+        assert_eq!(t.get(PartCategory::Leaf, s, Lod::Low), Visibility::Show);
+        assert_eq!(t.get(PartCategory::Sash, s, Lod::Low), Visibility::Hide);
+        assert_eq!(t.get(PartCategory::Sash, s, Lod::Medium), Visibility::Show);
         assert_eq!(t.get(PartCategory::Lintel, p, Lod::High), Visibility::Hide);
         assert_eq!(t.get(PartCategory::Trim, p, Lod::Medium), Visibility::Hide);
         assert_eq!(t.get(PartCategory::Trim, p, Lod::High), Visibility::Show);
