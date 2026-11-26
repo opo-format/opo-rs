@@ -388,11 +388,18 @@ fn derived_plan(
 ) -> Result<(), Error> {
     use opo_model::DeriveMethod;
     let h = opo_recipe::derive::cut_height(ev);
-    let solids: Vec<(opo_recipe::Solid, Option<opo_model::Hatch>)> =
+    let solids: Vec<(opo_recipe::Solid, Option<opo_model::Hatch>, bool)> =
         opo_recipe::derive::source_solids(def, ev, d)
             .map_err(|e| Error::Recipe(e.to_string()))?
             .into_iter()
             .map(|(s, key)| {
+                use opo_model::MaterialCategory as C;
+                // Only solid construction (concrete, masonry, earth) is filled at low detail.
+                let mass = key.as_ref().is_some_and(|m| {
+                    def.materials.iter().flatten().any(|(k, mat)| {
+                        k == m && matches!(mat.category, C::Concrete | C::Masonry | C::Earth)
+                    })
+                });
                 let hatch = key
                     .and_then(|m| {
                         def.materials
@@ -408,11 +415,11 @@ fn derived_plan(
                             .find(|(k, _)| *k == h)
                             .map(|(_, hd)| hd.clone())
                     });
-                (s, hatch)
+                (s, hatch, mass)
             })
             .collect();
     if matches!(d.method, DeriveMethod::Project | DeriveMethod::CutOrProject) {
-        let refs: Vec<&opo_recipe::Solid> = solids.iter().map(|(s, _)| s).collect();
+        let refs: Vec<&opo_recipe::Solid> = solids.iter().map(|(s, _, _)| s).collect();
         let p = pen(Some(LineClass::Projected), None);
         let mut path = String::new();
         for [a, b] in opo_recipe::derive::visible_edges_below(&refs, h) {
@@ -427,12 +434,13 @@ fn derived_plan(
     if matches!(d.method, DeriveMethod::Cut | DeriveMethod::CutOrProject) {
         let p = pen(Some(LineClass::Cut), None);
         let mut clip = 1000usize;
-        for (s, hatch) in &solids {
+        for (s, hatch, mass) in &solids {
             let shape = opo_recipe::derive::section(s, h);
             if !shape.0.is_empty() {
-                // White under the cut so the edges below it do not show through; at low
-                // detail (small scales) cut solids are filled solid instead of hatched.
-                region_fill(&shape, body, if poche { POCHE } else { "#ffffff" });
+                // White under the cut so the edges below it do not show through. At low detail
+                // (small scales) cut concrete and masonry are filled solid and nothing is
+                // hatched; frames and glass are outlined.
+                region_fill(&shape, body, if poche && *mass { POCHE } else { "#ffffff" });
                 region_svg(
                     &shape,
                     if poche { None } else { hatch.as_ref() },

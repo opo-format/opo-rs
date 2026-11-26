@@ -205,5 +205,35 @@ fn derived_plan_is_cut_from_the_model() {
         .unwrap();
     rep.lod = opo_model::Lod::Low;
     let low = plan_svg(&def, &ev, "plan.medium", 200.0).unwrap();
-    assert!(low.contains("fill=\"#3c3c3c\"") && !low.contains("<clipPath"));
+    assert!(
+        !low.contains("<clipPath") && !low.contains("fill=\"#3c3c3c\""),
+        "a timber door frame is outlined, not filled, at low detail"
+    );
+}
+
+#[test]
+fn low_detail_plans_fill_masonry_and_concrete() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let mut def = load_type(&spec.join("library/templates/IfcWall")).unwrap();
+    let mut input = Input::default();
+    input
+        .inputs
+        .insert("path".into(), serde_json::json!([[0, 0], [1.2, 0]]));
+    let ev = run(&def, &input, &opo_recipe::NoNesting).unwrap();
+    let rep = def
+        .representations
+        .iter_mut()
+        .find(|r| r.id == "plan.medium")
+        .unwrap();
+    rep.items = None;
+    rep.overlay = None;
+    rep.lod = opo_model::Lod::Low;
+    rep.source = opo_model::RepresentationSource::Derived;
+    rep.derive = Some(opo_model::Derive {
+        from: "model.medium".into(),
+        method: opo_model::DeriveMethod::Cut,
+        exclude_parts: None,
+    });
+    let svg = plan_svg(&def, &ev, "plan.medium", 100.0).unwrap();
+    assert!(svg.contains("fill=\"#3c3c3c\""), "the wall is filled solid");
 }
