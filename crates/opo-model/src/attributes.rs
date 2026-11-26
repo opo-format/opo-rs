@@ -597,6 +597,8 @@ pub enum Op {
     Text,
     Extrude,
     Sweep,
+    /// Solid through closed 3D sections with the same number of points (proposal 0003).
+    Loft,
     Revolve,
     Box,
     Cylinder,
@@ -612,7 +614,7 @@ pub enum Op {
 
 impl Op {
     /// Every operation.
-    pub const ALL: [Op; 24] = [
+    pub const ALL: [Op; 25] = [
         Op::Rectangle,
         Op::Polygon,
         Op::Circle,
@@ -626,6 +628,7 @@ impl Op {
         Op::Text,
         Op::Extrude,
         Op::Sweep,
+        Op::Loft,
         Op::Revolve,
         Op::Box,
         Op::Cylinder,
@@ -655,6 +658,7 @@ impl Op {
             Op::Text => "text",
             Op::Extrude => "extrude",
             Op::Sweep => "sweep",
+            Op::Loft => "loft",
             Op::Revolve => "revolve",
             Op::Box => "box",
             Op::Cylinder => "cylinder",
@@ -692,6 +696,7 @@ impl Op {
             Op::Text => (&["at", "value"], &["height"]),
             Op::Extrude => (&["profile", "from", "to"], &[]),
             Op::Sweep => (&["profile", "path"], &["roll"]),
+            Op::Loft => (&["sections"], &[]),
             Op::Revolve => (&["profile", "center", "axis", "angle"], &["segments"]),
             Op::Cylinder => (&["start", "end", "radius"], &["segments"]),
             Op::Move => (&["geometry", "by"], &[]),

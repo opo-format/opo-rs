@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn unknown_operation_is_rejected() {
         let mut a = minimal();
-        a["opo::recipe"][0]["op"] = json!("loft");
+        a["opo::recipe"][0]["op"] = json!("fillet");
         assert!(TypeDefinition::from_attributes(&a).is_err());
     }
 
@@ -487,6 +487,6 @@ mod tests {
             assert_eq!(Op::from_name(op.name()), Some(op));
             assert!(!op.arguments().0.is_empty());
         }
-        assert_eq!(Op::from_name("loft"), None);
+        assert_eq!(Op::from_name("fillet"), None);
     }
 }

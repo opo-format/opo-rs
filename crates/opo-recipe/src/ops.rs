@@ -295,6 +295,16 @@ pub(crate) fn apply(op: Op, plane: Plane, a: &[Value]) -> Result<Value, Error> {
             &points3(op, "path", arg(1))?,
             opt_num(op, "roll", a.get(2), 0.0)?,
         )?,
+        Op::Loft => {
+            let list = arg(0).as_list().ok_or_else(|| {
+                Error::Op("loft: 'sections' must be a list of closed 3D point lists".into())
+            })?;
+            let sections = list
+                .iter()
+                .map(|v| points3(op, "sections", v))
+                .collect::<Result<Vec<_>, _>>()?;
+            loft(&sections)?
+        }
         Op::Revolve => {
             let (c, k) = (p3(op, "center", arg(1))?, unit(p3(op, "axis", arg(2))?));
             let angle = num(op, "angle", arg(3))?;
@@ -618,6 +628,112 @@ fn sweep(profile: &Value, path: &[V3], roll: f64) -> Result<Value, Error> {
     Ok(list_value(out))
 }
 
+/// A solid through closed 3D sections (proposal 0003): point `i` of each section joins point
+/// `i` of the next by two triangles per quad; the first and last sections are capped.
+fn loft(sections: &[Vec<V3>]) -> Result<Value, Error> {
+    let mut rings: Vec<Vec<V3>> = sections
+        .iter()
+        .map(|s| {
+            let mut s = s.clone();
+            if s.len() > 1 && norm(sub(s[0], s[s.len() - 1])) < 1e-9 {
+                s.pop();
+            }
+            s
+        })
+        .collect();
+    let m = rings.first().map_or(0, Vec::len);
+    if rings.len() < 2 || m < 3 || rings.iter().any(|r| r.len() != m) {
+        return Err(Error::Op(
+            "loft: needs at least two sections of the same number of points (three or more)".into(),
+        ));
+    }
+    let centroid = |r: &[V3]| {
+        scale(
+            r.iter().fold([0.0; 3], |a, p| add(a, *p)),
+            1.0 / r.len() as f64,
+        )
+    };
+    // Newell normal of the first section, turned towards the last one.
+    let newell = |r: &[V3]| {
+        let mut n = [0.0; 3];
+        for i in 0..r.len() {
+            let (a, b) = (r[i], r[(i + 1) % r.len()]);
+            n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+            n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+            n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        n
+    };
+    let n0 = newell(&rings[0]);
+    if norm(n0) < 1e-12 {
+        return Err(Error::Op("loft: the first section has no area".into()));
+    }
+    let travel = sub(centroid(&rings[rings.len() - 1]), centroid(&rings[0]));
+    if dot(n0, travel) < 0.0 {
+        // The rings run clockwise seen along the loft: reverse them all.
+        for r in &mut rings {
+            r.reverse();
+        }
+    }
+    let ns = rings.len();
+    let cap = |r: &[V3]| -> Result<Vec<[usize; 3]>, Error> {
+        let n = unit(newell(r));
+        let u = unit(if n[2].abs() < 0.9 {
+            cross([0.0, 0.0, 1.0], n)
+        } else {
+            cross([1.0, 0.0, 0.0], n)
+        });
+        let v = cross(n, u);
+        let flat: Vec<f64> = r.iter().flat_map(|p| [dot(*p, u), dot(*p, v)]).collect();
+        let idx = earcutr::earcut(&flat, &[], 2)
+            .map_err(|e| Error::Op(format!("loft: cap triangulation failed: {e:?}")))?;
+        Ok(idx
+            .chunks_exact(3)
+            .map(|t| {
+                let (a, b, c) = (t[0], t[1], t[2]);
+                let cr = cross(sub(r[b], r[a]), sub(r[c], r[a]));
+                if dot(cr, n) < 0.0 {
+                    [a, c, b]
+                } else {
+                    [a, b, c]
+                }
+            })
+            .collect())
+    };
+    let mut faces = Vec::new();
+    // First cap faces backwards, last cap forwards (rings counter-clockwise along the loft).
+    let first = cap(&rings[0])?;
+    let n_first = unit(newell(&rings[0]));
+    let fwd = dot(n_first, travel) >= 0.0;
+    faces.extend(
+        first
+            .iter()
+            .map(|&[a, b, c]| if fwd { [a, c, b] } else { [a, b, c] }),
+    );
+    let off = (ns - 1) * m;
+    let last = cap(&rings[ns - 1])?;
+    let n_last = unit(newell(&rings[ns - 1]));
+    let lfwd = dot(n_last, travel) >= 0.0;
+    faces.extend(last.iter().map(|&[a, b, c]| {
+        if lfwd {
+            [a + off, b + off, c + off]
+        } else {
+            [a + off, c + off, b + off]
+        }
+    }));
+    for s in 0..ns - 1 {
+        for i in 0..m {
+            let (a, b) = (s * m + i, s * m + (i + 1) % m);
+            faces.push([a, b, b + m]);
+            faces.push([a, b + m, a + m]);
+        }
+    }
+    let points = rings.concat();
+    Ok(list_value(vec![Geometry::new(Shape::Solid(Solid::new(
+        points, faces,
+    )))]))
+}
+
 fn revolve(profile: &Value, c: V3, k: V3, angle: f64, segments: f64) -> Result<Value, Error> {
     let rot = |p: V3, a: f64| {
         let a = a.to_radians();
@@ -762,6 +878,47 @@ mod tests {
         let path = V::List(vec![pt(&[1.0, 1.0]), pt(&[1.0, 1.0])]);
         let b = apply(Op::Band, Plane::Xy, &[path, n(0.1), n(-0.1)]).unwrap();
         assert_eq!(area(&b), 0.0);
+    }
+
+    #[test]
+    fn loft_through_sections() {
+        let sq = |dx: f64, z: f64| {
+            V::List(
+                [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+                    .iter()
+                    .map(|[x, y]| pt(&[x + dx, *y, z]))
+                    .collect(),
+            )
+        };
+        // An oblique prism: volume 1 whatever the triangulation.
+        let s = apply(
+            Op::Loft,
+            Plane::Xy,
+            &[V::List(vec![sq(0.0, 0.0), sq(0.5, 1.0)])],
+        )
+        .unwrap();
+        assert!((volume(&s) - 1.0).abs() < 1e-9, "{}", volume(&s));
+        // Three sections, the middle one shifted; clockwise rings and a closing point work too.
+        let mut cw = sq(0.0, 2.0).as_list().unwrap().to_vec();
+        cw.reverse();
+        let rev = |v: V| {
+            let mut l = v.as_list().unwrap().to_vec();
+            l.reverse();
+            l.push(l[0].clone());
+            V::List(l)
+        };
+        let s = apply(
+            Op::Loft,
+            Plane::Xy,
+            &[V::List(vec![
+                rev(sq(0.0, 0.0)),
+                rev(sq(0.3, 1.0)),
+                V::List(cw),
+            ])],
+        )
+        .unwrap();
+        assert!((volume(&s) - 2.0).abs() < 1e-9, "{}", volume(&s));
+        assert!(apply(Op::Loft, Plane::Xy, &[V::List(vec![sq(0.0, 0.0)])]).is_err());
     }
 
     #[test]
