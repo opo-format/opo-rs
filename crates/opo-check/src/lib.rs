@@ -886,8 +886,12 @@ mod tests {
 
     #[test]
     fn interface_inputs_are_known_names() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../opo-spec/conformance/fixtures/library/templates/IfcOpeningElement");
+        let spec = std::env::var_os("OPO_SPEC_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../opo-spec")
+            });
+        let dir = spec.join("conformance/fixtures/library/templates/IfcOpeningElement");
         let mut def = load_type(&dir).unwrap();
         def.rules
             .get_or_insert_with(Default::default)
