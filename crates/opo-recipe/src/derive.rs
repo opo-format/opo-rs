@@ -7,7 +7,10 @@ use std::collections::HashMap;
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 
 use opo_feel::Value;
-use opo_model::{Derive, TypeDefinition};
+use opo_model::{
+    Derive, DrawingView, Lod, LodTable, Representation, RepresentationItem, TypeDefinition,
+    Visibility,
+};
 
 use crate::Error;
 use crate::geometry::Solid;
@@ -354,18 +357,26 @@ pub fn cut_height(ev: &Evaluation) -> f64 {
 }
 
 /// The solids a derived representation is made from, with their material keys: every solid
-/// of the source representation except voids and excluded parts.
+/// of the source representation except voids, excluded parts, and parts whose category the
+/// level-of-detail table hides or draws as a symbol in `view` (proposal 0005). The level is
+/// the source representation's.
 pub fn source_solids(
     def: &TypeDefinition,
     ev: &Evaluation,
     d: &Derive,
+    view: Option<DrawingView>,
+    table: &LodTable,
 ) -> Result<Vec<(Solid, Option<String>)>, Error> {
     let from = def
         .representation(&d.from)
         .ok_or_else(|| Error::Op(format!("derived from a missing representation {}", d.from)))?;
     let mut out = Vec::new();
     for item in from.items.iter().flatten() {
-        if item.role.as_deref() == Some("void")
+        let hidden = view.is_some_and(|v| {
+            table.resolve(item.category, v, from.lod, d.lod_exceptions.as_ref()) != Visibility::Show
+        });
+        if hidden
+            || item.role.as_deref() == Some("void")
             || d.exclude_parts
                 .iter()
                 .flatten()
@@ -383,6 +394,44 @@ pub fn source_solids(
         }
     }
     Ok(out)
+}
+
+/// Whether an overlay item of a derived representation is drawn: an item with a category is
+/// the symbol for that category, drawn only where the table says `symbol` (proposal 0005);
+/// an item without one is always drawn.
+pub fn overlay_shown(
+    item: &RepresentationItem,
+    d: &Derive,
+    view: Option<DrawingView>,
+    lod: Lod,
+    table: &LodTable,
+) -> bool {
+    match (item.category, view) {
+        (Some(_), Some(v)) => {
+            table.resolve(item.category, v, lod, d.lod_exceptions.as_ref()) == Visibility::Symbol
+        }
+        _ => true,
+    }
+}
+
+/// A representation's items and the overlay items it draws (see [`overlay_shown`]).
+pub fn drawn_items<'a>(
+    rep: &'a Representation,
+    table: &'a LodTable,
+) -> impl Iterator<Item = &'a RepresentationItem> + 'a {
+    let view = DrawingView::of(rep.context);
+    rep.items
+        .iter()
+        .flatten()
+        .chain(
+            rep.overlay
+                .iter()
+                .flatten()
+                .filter(move |i| match &rep.derive {
+                    Some(d) => overlay_shown(i, d, view, rep.lod, table),
+                    None => true,
+                }),
+        )
 }
 
 #[cfg(test)]

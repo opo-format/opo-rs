@@ -207,10 +207,9 @@ fn representation<'a>(def: &'a TypeDefinition, id: &str) -> Result<&'a Represent
 }
 
 fn items_of(rep: &Representation) -> impl Iterator<Item = &RepresentationItem> {
-    rep.items
-        .iter()
-        .flatten()
-        .chain(rep.overlay.iter().flatten())
+    static TABLE: std::sync::LazyLock<opo_model::LodTable> =
+        std::sync::LazyLock::new(opo_model::LodTable::default);
+    opo_recipe::derive::drawn_items(rep, &TABLE)
 }
 
 /// The material key an expression (an item's `material` or `hatch`) gives for a geometry.
@@ -389,35 +388,41 @@ fn derived_plan(
     use opo_model::DeriveMethod;
     let h = opo_recipe::derive::cut_height(ev);
     let solids: Vec<(opo_recipe::Solid, Option<opo_model::Hatch>, bool)> =
-        opo_recipe::derive::source_solids(def, ev, d)
-            .map_err(|e| Error::Recipe(e.to_string()))?
-            .into_iter()
-            .map(|(s, key)| {
-                use opo_model::MaterialCategory as C;
-                // Only solid construction (concrete, masonry, earth) is filled at low detail.
-                let mass = key.as_ref().is_some_and(|m| {
-                    def.materials.iter().flatten().any(|(k, mat)| {
-                        k == m && matches!(mat.category, C::Concrete | C::Masonry | C::Earth)
-                    })
+        opo_recipe::derive::source_solids(
+            def,
+            ev,
+            d,
+            Some(opo_model::DrawingView::Plan),
+            &opo_model::LodTable::default(),
+        )
+        .map_err(|e| Error::Recipe(e.to_string()))?
+        .into_iter()
+        .map(|(s, key)| {
+            use opo_model::MaterialCategory as C;
+            // Only solid construction (concrete, masonry, earth) is filled at low detail.
+            let mass = key.as_ref().is_some_and(|m| {
+                def.materials.iter().flatten().any(|(k, mat)| {
+                    k == m && matches!(mat.category, C::Concrete | C::Masonry | C::Earth)
+                })
+            });
+            let hatch = key
+                .and_then(|m| {
+                    def.materials
+                        .iter()
+                        .flatten()
+                        .find(|(k, _)| *k == m)
+                        .map(|(_, mat)| mat.cut.hatch.clone())
+                })
+                .and_then(|h| {
+                    def.hatches
+                        .iter()
+                        .flatten()
+                        .find(|(k, _)| *k == h)
+                        .map(|(_, hd)| hd.clone())
                 });
-                let hatch = key
-                    .and_then(|m| {
-                        def.materials
-                            .iter()
-                            .flatten()
-                            .find(|(k, _)| *k == m)
-                            .map(|(_, mat)| mat.cut.hatch.clone())
-                    })
-                    .and_then(|h| {
-                        def.hatches
-                            .iter()
-                            .flatten()
-                            .find(|(k, _)| *k == h)
-                            .map(|(_, hd)| hd.clone())
-                    });
-                (s, hatch, mass)
-            })
-            .collect();
+            (s, hatch, mass)
+        })
+        .collect();
     if matches!(d.method, DeriveMethod::Project | DeriveMethod::CutOrProject) {
         let refs: Vec<&opo_recipe::Solid> = solids.iter().map(|(s, _, _)| s).collect();
         let p = pen(Some(LineClass::Projected), None);

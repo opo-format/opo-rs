@@ -132,13 +132,8 @@ pub fn bake(doc: &mut Document, resolver: &dyn Resolver, base: &str) -> Result<B
         let Some(rep) = def.representation(rid) else {
             continue;
         };
-        for (k, item) in rep
-            .items
-            .iter()
-            .flatten()
-            .chain(rep.overlay.iter().flatten())
-            .enumerate()
-        {
+        let table = opo_model::LodTable::default();
+        for (k, item) in opo_recipe::derive::drawn_items(rep, &table).enumerate() {
             for (j, g) in ev
                 .items(&item.geometry)
                 .map_err(Error::Recipe)?
@@ -258,7 +253,12 @@ fn bake_derived(
     use opo_model::{DeriveMethod, LineClass};
     use opo_recipe::derive::{cut_height, section, source_solids, visible_edges_below};
     let h = cut_height(ev);
-    let solids = source_solids(def, ev, d).map_err(Error::Recipe)?;
+    let view = opo_model::DrawingView::of(
+        def.representation(rid)
+            .map_or(opo_model::Context::Plan, |r| r.context),
+    );
+    let solids =
+        source_solids(def, ev, d, view, &opo_model::LodTable::default()).map_err(Error::Recipe)?;
     let context = rid.split('.').next().unwrap_or(rid);
     let title = format!("{}{}", context[..1].to_uppercase(), &context[1..]);
     let mut push = |label: String,

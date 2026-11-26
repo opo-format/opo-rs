@@ -651,6 +651,7 @@ mod tests {
             class: None,
             role: None,
             part: None,
+            category: None,
         };
         assert_eq!(
             resolve_material(&item, &ev.env, &items[1]).unwrap(),

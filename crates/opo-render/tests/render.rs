@@ -186,6 +186,7 @@ fn derived_plan_is_cut_from_the_model() {
         from: "model.medium".into(),
         method: opo_model::DeriveMethod::CutOrProject,
         exclude_parts: None,
+        lod_exceptions: None,
     });
     let svg = plan_svg(&def, &ev, "plan.medium", 50.0).unwrap();
     if let Some(dir) = std::env::var_os("OPO_RENDER_OUT") {
@@ -233,7 +234,83 @@ fn low_detail_plans_fill_masonry_and_concrete() {
         from: "model.medium".into(),
         method: opo_model::DeriveMethod::Cut,
         exclude_parts: None,
+        lod_exceptions: None,
     });
     let svg = plan_svg(&def, &ev, "plan.medium", 100.0).unwrap();
     assert!(svg.contains("fill=\"#3c3c3c\""), "the wall is filled solid");
+}
+
+#[test]
+fn part_categories_follow_the_lod_table() {
+    // Proposal 0005: finish layers are hidden in a low plan and shown in a medium one; an
+    // object exception can show them at low detail.
+    let spec = spec_dir().join("conformance/fixtures");
+    let mut def = load_type(&spec.join("library/templates/IfcWall")).unwrap();
+    let mut input = Input::default();
+    input
+        .inputs
+        .insert("path".into(), serde_json::json!([[0, 0], [1.2, 0]]));
+    let ev = run(&def, &input, &opo_recipe::NoNesting).unwrap();
+    for id in ["model.low", "model.medium"] {
+        let m = def.representations.iter_mut().find(|r| r.id == id).unwrap();
+        m.lod = if id == "model.low" {
+            opo_model::Lod::Low
+        } else {
+            opo_model::Lod::Medium
+        };
+        m.items = def_items_with_finish(&m.items);
+    }
+    let plan = |def: &mut opo_model::TypeDefinition, from: &str, exc| {
+        let rep = def
+            .representations
+            .iter_mut()
+            .find(|r| r.id == "plan.medium")
+            .unwrap();
+        rep.items = None;
+        rep.overlay = None;
+        rep.source = opo_model::RepresentationSource::Derived;
+        rep.derive = Some(opo_model::Derive {
+            from: from.into(),
+            method: opo_model::DeriveMethod::Cut,
+            exclude_parts: None,
+            lod_exceptions: exc,
+        });
+        plan_svg(def, &ev, "plan.medium", 50.0).unwrap()
+    };
+    let low = plan(&mut def, "model.low", None);
+    let medium = plan(&mut def, "model.medium", None);
+    assert!(
+        medium.matches("<path").count() > low.matches("<path").count(),
+        "the finish layers appear at medium detail"
+    );
+    let shown = plan(
+        &mut def,
+        "model.low",
+        Some([(opo_model::PartCategory::Finish, opo_model::Visibility::Show)].into()),
+    );
+    assert_eq!(
+        shown.matches("<path").count(),
+        medium.matches("<path").count(),
+        "an object exception shows them at low detail"
+    );
+}
+
+/// Two items over the wall template's layer solids, one in the structure category and one in
+/// the finish category, so the table has something to hide.
+fn def_items_with_finish(
+    _items: &Option<Vec<opo_model::RepresentationItem>>,
+) -> Option<Vec<opo_model::RepresentationItem>> {
+    let item = |cat| opo_model::RepresentationItem {
+        geometry: "layer_solids".into(),
+        material: Some("each.material".into()),
+        hatch: None,
+        class: None,
+        role: None,
+        part: Some("Layer".into()),
+        category: Some(cat),
+    };
+    Some(vec![
+        item(opo_model::PartCategory::Structure),
+        item(opo_model::PartCategory::Finish),
+    ])
 }
