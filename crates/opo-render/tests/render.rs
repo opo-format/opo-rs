@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use opo_check::{DirResolver, load_type};
 use opo_recipe::{Input, run};
-use opo_render::{elevation_svg, hosted_plan_svg, model_svg, plan_svg, solid_colour};
+use opo_render::{
+    elevation_svg, hosted_plan_svg, model_svg, plan_svg, solid_colour, walls_plan_svg,
+};
 
 fn spec_dir() -> PathBuf {
     std::env::var_os("OPO_SPEC_DIR")
@@ -425,6 +427,37 @@ fn a_hosted_door_shows_in_elevation_section_and_3d() {
             );
         } else {
             assert!(svg.contains("<image"), "{v:?} is shaded");
+        }
+    }
+}
+
+#[test]
+fn joined_walls_draw_as_one_outline() {
+    // Decision 0026: an L corner, a T and a crossing drawn together.
+    let spec = spec_dir().join("conformance/fixtures");
+    let wall = load_type(&spec.join("library/templates/IfcWall")).unwrap();
+    let paths = [
+        serde_json::json!([[0, 0], [4, 0]]),
+        serde_json::json!([[4, 0], [4, 3]]),
+        serde_json::json!([[2, 0], [2, 3]]),
+    ];
+    let evs: Vec<_> = paths
+        .iter()
+        .map(|p| {
+            let mut i = Input::default();
+            i.inputs.insert("path".into(), p.clone());
+            run(&wall, &i, &opo_recipe::NoNesting).unwrap()
+        })
+        .collect();
+    let refs: Vec<_> = evs.iter().map(|e| (&wall, e)).collect();
+    for lod in [opo_model::Lod::Low, opo_model::Lod::Medium] {
+        let svg = walls_plan_svg(&refs, lod, 50.0).unwrap();
+        if let Some(dir) = std::env::var_os("OPO_RENDER_OUT") {
+            std::fs::write(PathBuf::from(dir).join(format!("walls-{lod:?}.svg")), &svg).unwrap();
+        }
+        assert!(balanced(&svg));
+        if lod == opo_model::Lod::Low {
+            assert!(svg.contains("fill=\"#3c3c3c\""), "one solid fill");
         }
     }
 }

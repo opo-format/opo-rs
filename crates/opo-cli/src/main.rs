@@ -24,6 +24,7 @@ Usage:
   opo render FOLDER [--root DIR] [--view plan|model|elevation] [--representation ID]
              [--scale N] [--values JSON] [--inputs JSON] [-o FILE.svg]
              [--in HOST_FOLDER [--at X] [--host-values JSON] [--host-inputs JSON]]
+  opo walls SPEC.json [-o FILE.svg]
 
 Commands:
   check   Validate unpacked object folders (object.ifcx + layers/): schema, names,
@@ -59,6 +60,9 @@ Commands:
           parts, layer nodes); exit 1 on any difference.
   render  Draw an object as SVG: a hatched plan (default plan.medium at 1:50) or a
           shaded 3D view (model.medium). Values and inputs are JSON objects.
+  walls   Draw several walls joined in plan (decision 0026). SPEC.json:
+          {\"root\": DIR, \"lod\": \"low|medium|high\", \"scale\": N, \"walls\":
+           [{\"folder\": DIR, \"values\": {...}, \"inputs\": {\"path\": [...]}}, ...]}
 
 Options:
   --root DIR   Folder that object ids 'opo-format.org/<path>' resolve under (default: .)
@@ -391,6 +395,65 @@ fn render(args: &[String]) -> Result<bool, String> {
         }
     }
     .map_err(|e| e.to_string())?;
+    match out {
+        Some(f) => std::fs::write(&f, svg).map_err(|e| format!("{}: {e}", f.display()))?,
+        None => print!("{svg}"),
+    }
+    Ok(true)
+}
+
+/// `opo walls SPEC.json [-o FILE]`: several walls joined in plan.
+fn walls(args: &[String]) -> Result<bool, String> {
+    let (mut spec, mut out) = (None::<PathBuf>, None::<PathBuf>);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "-o" => out = Some(it.next().ok_or("-o needs a file")?.into()),
+            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s if spec.is_none() => spec = Some(s.into()),
+            s => return Err(format!("unexpected argument {s}")),
+        }
+    }
+    let spec = spec.ok_or("walls needs a SPEC.json")?;
+    let text = std::fs::read_to_string(&spec).map_err(|e| format!("{}: {e}", spec.display()))?;
+    let j: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", spec.display()))?;
+    let root = PathBuf::from(j.get("root").and_then(|v| v.as_str()).unwrap_or("."));
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: root.clone(),
+    };
+    let lod = match j.get("lod").and_then(|v| v.as_str()).unwrap_or("medium") {
+        "low" => opo_model::Lod::Low,
+        "high" => opo_model::Lod::High,
+        _ => opo_model::Lod::Medium,
+    };
+    let scale = j.get("scale").and_then(|v| v.as_f64()).unwrap_or(50.0);
+    let obj = |v: Option<&serde_json::Value>| match v {
+        Some(serde_json::Value::Object(m)) => m.clone(),
+        _ => Default::default(),
+    };
+    let mut loaded = Vec::new();
+    for w in j
+        .get("walls")
+        .and_then(|v| v.as_array())
+        .ok_or("SPEC.json needs a walls list")?
+    {
+        let folder = w
+            .get("folder")
+            .and_then(|v| v.as_str())
+            .ok_or("each wall needs a folder")?;
+        let def = opo_check::load_type(&root.join(folder))?;
+        let input = opo_recipe::Input {
+            values: obj(w.get("values")),
+            inputs: obj(w.get("inputs")),
+            ..Default::default()
+        };
+        let ev = opo_recipe::run(&def, &input, &resolver).map_err(|e| e.to_string())?;
+        loaded.push((def, ev));
+    }
+    let refs: Vec<_> = loaded.iter().map(|(d, e)| (d, e)).collect();
+    let svg = opo_render::walls_plan_svg(&refs, lod, scale).map_err(|e| e.to_string())?;
     match out {
         Some(f) => std::fs::write(&f, svg).map_err(|e| format!("{}: {e}", f.display()))?,
         None => print!("{svg}"),
@@ -784,6 +847,7 @@ fn main() -> ExitCode {
         Some("pack") => pack(&args[1..]),
         Some("unpack") => unpack(&args[1..]),
         Some("render") => render(&args[1..]),
+        Some("walls") => walls(&args[1..]),
         Some("build") => build(&args[1..]),
         Some("export") => export(&args[1..]),
         Some("generate") => generate(&args[1..]),

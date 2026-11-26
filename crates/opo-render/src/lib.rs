@@ -468,6 +468,101 @@ pub fn hosted_plan_svg(
     Ok(svg_document(bounds, &all, true))
 }
 
+/// A plan of several walls joined (decision 0026): their plan shapes trimmed by
+/// [`opo_recipe::joins::join`]. At low detail all walls are one region, filled solid where
+/// the core is mass construction; at medium and high, layers of the same material are merged
+/// across walls and hatched, so a core runs into a core without a line, and the walls'
+/// outline is drawn over them. Materials and hatches come from each wall's definition.
+pub fn walls_plan_svg(
+    walls: &[(&TypeDefinition, &Evaluation)],
+    lod: opo_model::Lod,
+    scale: f64,
+) -> Result<String, Error> {
+    use opo_recipe::BooleanOps;
+    let plans = walls
+        .iter()
+        .map(|(_, ev)| opo_recipe::joins::WallPlan::from_evaluation(ev))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::Recipe(e.to_string()))?;
+    let joined = opo_recipe::joins::join(&plans);
+    let (mut defs, mut body, mut bounds) = (String::new(), String::new(), Bounds::new());
+    let p = pen(Some(LineClass::Cut), None);
+    let thin = pen(Some(LineClass::Projected), None);
+    let mut clip = 7000usize;
+    // The outline of all walls, from the layers (which overlap a hair across mitres), so no
+    // seam shows where walls meet.
+    let all = joined
+        .iter()
+        .flat_map(|j| {
+            j.layers
+                .iter()
+                .map(|l| &l.0)
+                .chain(std::iter::once(&j.shape))
+        })
+        .fold(opo_recipe::MultiPolygon::<f64>(Vec::new()), |acc, s| {
+            acc.union(s)
+        });
+    if lod == opo_model::Lod::Low {
+        let mass = joined.iter().zip(walls).any(|(j, (def, _))| {
+            j.layers.iter().any(|(_, m, f)| {
+                f.as_deref() == Some("structure") && material_look(def, m.as_deref()).1
+            })
+        });
+        region_fill(&all, &mut body, if mass { POCHE } else { "#ffffff" });
+        region_svg(
+            &all,
+            None,
+            &p,
+            scale,
+            &mut defs,
+            &mut body,
+            &mut clip,
+            &mut bounds,
+        );
+    } else {
+        // Merge layers by material across walls, in order of first appearance.
+        let mut merged: Vec<(Option<String>, opo_recipe::MultiPolygon<f64>, usize)> = Vec::new();
+        for (wi, j) in joined.iter().enumerate() {
+            for (shape, m, _) in &j.layers {
+                match merged.iter_mut().find(|(k, _, _)| k == m) {
+                    Some(e) => e.1 = e.1.union(shape),
+                    None => merged.push((m.clone(), shape.clone(), wi)),
+                }
+            }
+        }
+        region_fill(&all, &mut body, "#ffffff");
+        for (m, shape, wi) in &merged {
+            let (hatch, _) = material_look(walls[*wi].0, m.as_deref());
+            region_svg(
+                shape,
+                hatch.as_ref(),
+                &thin,
+                scale,
+                &mut defs,
+                &mut body,
+                &mut clip,
+                &mut bounds,
+            );
+        }
+        region_svg(
+            &all,
+            None,
+            &p,
+            scale,
+            &mut defs,
+            &mut body,
+            &mut clip,
+            &mut bounds,
+        );
+    }
+    let mut out = String::new();
+    if !defs.is_empty() {
+        writeln!(out, "<defs>\n{defs}</defs>").unwrap();
+    }
+    out.push_str(&body);
+    Ok(svg_document(bounds, &out, true))
+}
+
 /// A material's cut hatch, and whether it is mass construction (concrete, masonry, earth),
 /// which is filled solid at low detail.
 fn material_look(def: &TypeDefinition, key: Option<&str>) -> (Option<opo_model::Hatch>, bool) {
