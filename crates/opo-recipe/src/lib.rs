@@ -10,6 +10,7 @@
 //! solid boolean operations). Curved shapes are polygons: a circle with `segments` = 48 is a
 //! 48-gon.
 
+pub mod derive;
 mod geometry;
 mod grid;
 mod mesh;

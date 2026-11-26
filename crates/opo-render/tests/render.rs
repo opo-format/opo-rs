@@ -164,3 +164,37 @@ fn door_elevation_has_the_model_and_its_lines() {
     );
     assert!(elevation_svg(&def, &ev, "model.medium", Some("elevation.none"), 50.0).is_err());
 }
+
+#[test]
+fn derived_plan_is_cut_from_the_model() {
+    let spec = spec_dir().join("conformance/fixtures");
+    let resolver = DirResolver {
+        prefix: "opo-format.org/".into(),
+        root: spec.clone(),
+    };
+    let mut def = load_type(&spec.join("examples/door/single-swing-door")).unwrap();
+    let ev = run(&def, &Input::default(), &resolver).unwrap();
+    let rep = def
+        .representations
+        .iter_mut()
+        .find(|r| r.id == "plan.medium")
+        .unwrap();
+    rep.items = None;
+    rep.overlay = None;
+    rep.source = opo_model::RepresentationSource::Derived;
+    rep.derive = Some(opo_model::Derive {
+        from: "model.medium".into(),
+        method: opo_model::DeriveMethod::CutOrProject,
+        exclude_parts: None,
+    });
+    let svg = plan_svg(&def, &ev, "plan.medium", 50.0).unwrap();
+    if let Some(dir) = std::env::var_os("OPO_RENDER_OUT") {
+        std::fs::write(PathBuf::from(dir).join("door-derived-plan.svg"), &svg).unwrap();
+    }
+    assert!(balanced(&svg));
+    assert!(svg.contains("fill=\"#ffffff\""), "cut regions");
+    assert!(
+        svg.contains("stroke-width=\"0.0175\""),
+        "cut lines are 0.35 mm at 1:50"
+    );
+}
