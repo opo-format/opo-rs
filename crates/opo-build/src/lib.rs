@@ -132,7 +132,13 @@ pub fn bake(doc: &mut Document, resolver: &dyn Resolver, base: &str) -> Result<B
         let Some(rep) = def.representation(rid) else {
             continue;
         };
-        for (k, item) in rep.items.iter().flatten().enumerate() {
+        for (k, item) in rep
+            .items
+            .iter()
+            .flatten()
+            .chain(rep.overlay.iter().flatten())
+            .enumerate()
+        {
             for (j, g) in ev
                 .items(&item.geometry)
                 .map_err(Error::Recipe)?
@@ -210,6 +216,18 @@ pub fn bake(doc: &mut Document, resolver: &dyn Resolver, base: &str) -> Result<B
                 });
             }
         }
+        if let Some(d) = &rep.derive {
+            bake_derived(
+                &def,
+                &ev,
+                d,
+                rid,
+                base,
+                &mut children,
+                &mut nodes,
+                &mut report,
+            )?;
+        }
     }
     if let Some(n) = doc.data.iter_mut().find(|n| {
         n.path == type_path
@@ -222,6 +240,97 @@ pub fn bake(doc: &mut Document, resolver: &dyn Resolver, base: &str) -> Result<B
     }
     doc.data.extend(nodes);
     Ok(report)
+}
+
+/// The curves of a derived plan (spec §4.6): cut outlines at the view's cut height, one node
+/// per solid with its material, and the edges seen below the cut in one node.
+#[allow(clippy::too_many_arguments)]
+fn bake_derived(
+    def: &TypeDefinition,
+    ev: &opo_recipe::Evaluation,
+    d: &opo_model::Derive,
+    rid: &str,
+    base: &str,
+    children: &mut Map<String, Json>,
+    nodes: &mut Vec<Node>,
+    report: &mut BakeReport,
+) -> Result<(), Error> {
+    use opo_model::{DeriveMethod, LineClass};
+    use opo_recipe::derive::{cut_height, section, source_solids, visible_edges_below};
+    let h = cut_height(ev);
+    let solids = source_solids(def, ev, d).map_err(Error::Recipe)?;
+    let context = rid.split('.').next().unwrap_or(rid);
+    let title = format!("{}{}", context[..1].to_uppercase(), &context[1..]);
+    let mut push = |label: String,
+                    path: String,
+                    curves: Vec<Vec<[f64; 3]>>,
+                    class: LineClass,
+                    mat: Option<&String>| {
+        let counts: Vec<usize> = curves.iter().map(Vec::len).collect();
+        let points: Vec<Json> = curves
+            .into_iter()
+            .flatten()
+            .map(|p| json!([r9(p[0]), r9(p[1]), r9(p[2])]))
+            .collect();
+        let mut a = Map::new();
+        a.insert("opo::representation".into(), json!(rid));
+        a.insert(
+            "usd::usdgeom::basiscurves".into(),
+            json!({"points": points, "curveVertexCounts": counts}),
+        );
+        a.insert(
+            "opo::line_class".into(),
+            serde_json::to_value(class).expect("serialises"),
+        );
+        if let Some(m) = mat {
+            a.insert("bsi::ifc::material".into(), json!({"code": m, "uri": ""}));
+        }
+        let path = node_id(&path);
+        children.insert(label, json!(path.clone()));
+        nodes.push(Node {
+            path,
+            children: None,
+            inherits: None,
+            attributes: Some(a),
+        });
+        report.curves += 1;
+    };
+    if matches!(d.method, DeriveMethod::Cut | DeriveMethod::CutOrProject) {
+        for (k, (s, mat)) in solids.iter().enumerate() {
+            let shape = section(s, h);
+            let rings: Vec<Vec<[f64; 3]>> = shape
+                .iter()
+                .flat_map(|poly| std::iter::once(poly.exterior()).chain(poly.interiors()))
+                .map(|r| r.coords().map(|c| [c.x, c.y, 0.0]).collect())
+                .collect();
+            if !rings.is_empty() {
+                push(
+                    format!("{title}_cut_{}", k + 1),
+                    format!("{base}/baked/{rid}/cut/{k}"),
+                    rings,
+                    LineClass::Cut,
+                    mat.as_ref(),
+                );
+            }
+        }
+    }
+    if matches!(d.method, DeriveMethod::Project | DeriveMethod::CutOrProject) {
+        let refs: Vec<&opo_recipe::Solid> = solids.iter().map(|(s, _)| s).collect();
+        let lines: Vec<Vec<[f64; 3]>> = visible_edges_below(&refs, h)
+            .into_iter()
+            .map(|[a, b]| vec![[a[0], a[1], 0.0], [b[0], b[1], 0.0]])
+            .collect();
+        if !lines.is_empty() {
+            push(
+                format!("{title}_projected"),
+                format!("{base}/baked/{rid}/projected"),
+                lines,
+                LineClass::Projected,
+                None,
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Curves of a 2D or 3D shape in object coordinates: region boundaries (closed rings),

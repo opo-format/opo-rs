@@ -52,13 +52,16 @@ struct Pen {
     colour: &'static str,
 }
 
+/// Colour of every dashed line (opening symbols, hidden and overhead lines): light grey.
+const DASHED: &str = "#a6a6a6";
+
 fn pen(class: Option<LineClass>, role: Option<&str>) -> Pen {
     if role == Some("opening") {
         // Opening symbols (sash triangles, swing lines) are drawn dashed.
         return Pen {
             width: 0.18,
             dash: &[2.0, 1.0],
-            colour: "#000000",
+            colour: DASHED,
         };
     }
     if role == Some("clearance") {
@@ -82,12 +85,12 @@ fn pen(class: Option<LineClass>, role: Option<&str>) -> Pen {
         LineClass::Overhead => Pen {
             width: 0.18,
             dash: &[3.0, 1.5],
-            colour: "#000000",
+            colour: DASHED,
         },
         LineClass::Hidden => Pen {
             width: 0.18,
             dash: &[1.5, 1.5],
-            colour: "#000000",
+            colour: DASHED,
         },
         LineClass::Annotation => Pen {
             width: 0.13,
@@ -99,6 +102,61 @@ fn pen(class: Option<LineClass>, role: Option<&str>) -> Pen {
         p.width *= 1.8;
     }
     p
+}
+
+/// A dashed polyline split at its corners (turns over 30°), each piece with the dash pattern
+/// stretched so it starts and ends with a dash: dashed lines meet at their corners.
+fn dashed_polyline(points: &[[f64; 2]], p: &Pen, scale: f64, body: &mut String) {
+    let k = scale / 1000.0;
+    let mut pieces: Vec<Vec<[f64; 2]>> = vec![vec![]];
+    for (i, q) in points.iter().enumerate() {
+        pieces.last_mut().expect("one").push(*q);
+        if i > 0 && i + 1 < points.len() {
+            let (a, b, c) = (points[i - 1], *q, points[i + 1]);
+            let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            let (lu, lv) = (u[0].hypot(u[1]), v[0].hypot(v[1]));
+            if lu > 1e-12
+                && lv > 1e-12
+                && (u[0] * v[0] + u[1] * v[1]) / (lu * lv) < 30f64.to_radians().cos()
+            {
+                pieces.push(vec![*q]);
+            }
+        }
+    }
+    let solid = Pen {
+        width: p.width,
+        dash: &[],
+        colour: p.colour,
+    };
+    for piece in pieces.iter().filter(|x| x.len() > 1) {
+        let len: f64 = piece
+            .windows(2)
+            .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+            .sum();
+        let pat: Vec<f64> = p.dash.iter().map(|x| x * k).collect();
+        let period: f64 = pat.iter().sum();
+        let first = pat[0];
+        // Whole periods plus a closing dash fill the piece exactly.
+        let reps = ((len - first) / period).round().max(0.0);
+        let f = if reps < 1.0 {
+            1.0
+        } else {
+            len / (reps * period + first)
+        };
+        let d: Vec<String> = pat.iter().map(|x| n(x * f)).collect();
+        let pts: Vec<String> = piece
+            .iter()
+            .map(|q| format!("{},{}", n(q[0]), n(-q[1])))
+            .collect();
+        writeln!(
+            body,
+            "<polyline points=\"{}\" {} stroke-dasharray=\"{}\"/>",
+            pts.join(" "),
+            stroke(&solid, scale),
+            d.join(" ")
+        )
+        .unwrap();
+    }
 }
 
 fn stroke(p: &Pen, scale: f64) -> String {
@@ -287,13 +345,235 @@ pub fn plan_svg(
     scale: f64,
 ) -> Result<String, Error> {
     let rep = representation(def, representation_id)?;
-    let (defs, body, bounds) = draw_2d(def, ev, rep, scale, false)?;
+    let (mut defs, mut body, mut bounds) = (String::new(), String::new(), Bounds::new());
+    if let Some(d) = &rep.derive {
+        derived_plan(def, ev, d, scale, &mut defs, &mut body, &mut bounds)?;
+    }
+    let (d2, b2, bb) = draw_2d(def, ev, rep, scale, false)?;
+    defs.push_str(&d2);
+    body.push_str(&b2);
+    if bb.min[0] <= bb.max[0] {
+        bounds.add(bb.min);
+        bounds.add(bb.max);
+    }
     let mut all = String::new();
     if !defs.is_empty() {
         writeln!(all, "<defs>\n{defs}</defs>").unwrap();
     }
     all.push_str(&body);
     Ok(svg_document(bounds, &all, true))
+}
+
+/// A plan derived from a 3D representation (spec §4.6): the cut through its solids at the
+/// view's cut height, hatched by material, and the edges below the cut seen from above.
+fn derived_plan(
+    def: &TypeDefinition,
+    ev: &Evaluation,
+    d: &opo_model::Derive,
+    scale: f64,
+    defs: &mut String,
+    body: &mut String,
+    bounds: &mut Bounds,
+) -> Result<(), Error> {
+    use opo_model::DeriveMethod;
+    let h = opo_recipe::derive::cut_height(ev);
+    let solids: Vec<(opo_recipe::Solid, Option<opo_model::Hatch>)> =
+        opo_recipe::derive::source_solids(def, ev, d)
+            .map_err(|e| Error::Recipe(e.to_string()))?
+            .into_iter()
+            .map(|(s, key)| {
+                let hatch = key
+                    .and_then(|m| {
+                        def.materials
+                            .iter()
+                            .flatten()
+                            .find(|(k, _)| *k == m)
+                            .map(|(_, mat)| mat.cut.hatch.clone())
+                    })
+                    .and_then(|h| {
+                        def.hatches
+                            .iter()
+                            .flatten()
+                            .find(|(k, _)| *k == h)
+                            .map(|(_, hd)| hd.clone())
+                    });
+                (s, hatch)
+            })
+            .collect();
+    if matches!(d.method, DeriveMethod::Project | DeriveMethod::CutOrProject) {
+        let refs: Vec<&opo_recipe::Solid> = solids.iter().map(|(s, _)| s).collect();
+        let p = pen(Some(LineClass::Projected), None);
+        let mut path = String::new();
+        for [a, b] in opo_recipe::derive::visible_edges_below(&refs, h) {
+            bounds.add(a);
+            bounds.add(b);
+            write!(path, "M{} {}L{} {}", n(a[0]), n(-a[1]), n(b[0]), n(-b[1])).unwrap();
+        }
+        if !path.is_empty() {
+            writeln!(body, "<path d=\"{path}\" {}/>", stroke(&p, scale)).unwrap();
+        }
+    }
+    if matches!(d.method, DeriveMethod::Cut | DeriveMethod::CutOrProject) {
+        let p = pen(Some(LineClass::Cut), None);
+        let mut clip = 1000usize;
+        for (s, hatch) in &solids {
+            let shape = opo_recipe::derive::section(s, h);
+            if !shape.0.is_empty() {
+                // White under the cut so the edges below it do not show through.
+                region_fill(&shape, body);
+                region_svg(
+                    &shape,
+                    hatch.as_ref(),
+                    &p,
+                    scale,
+                    defs,
+                    body,
+                    &mut clip,
+                    bounds,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A white fill under a cut region.
+fn region_fill(shape: &opo_recipe::MultiPolygon<f64>, body: &mut String) {
+    let mut d = String::new();
+    for poly in shape {
+        for ring in std::iter::once(poly.exterior()).chain(poly.interiors()) {
+            d.push_str(&ring_path(ring.coords().map(|c| [c.x, c.y]), -1.0));
+            d.push(' ');
+        }
+    }
+    writeln!(
+        body,
+        "<path d=\"{}\" fill=\"#ffffff\" fill-rule=\"evenodd\" stroke=\"none\"/>",
+        d.trim_end()
+    )
+    .unwrap();
+}
+
+/// One region on a plan: its hatch (if any) clipped to it, then its outline.
+#[allow(clippy::too_many_arguments)]
+fn region_svg(
+    shape: &opo_recipe::MultiPolygon<f64>,
+    hatch: Option<&opo_model::Hatch>,
+    p: &Pen,
+    scale: f64,
+    defs: &mut String,
+    body: &mut String,
+    clip: &mut usize,
+    bounds: &mut Bounds,
+) {
+    let k = scale / 1000.0;
+    let mut d = String::new();
+    for poly in shape {
+        for ring in std::iter::once(poly.exterior()).chain(poly.interiors()) {
+            let pts: Vec<[f64; 2]> = ring.coords().map(|c| [c.x, c.y]).collect();
+            pts.iter().for_each(|q| bounds.add([q[0], q[1]]));
+            d.push_str(&ring_path(pts.into_iter(), -1.0));
+            d.push(' ');
+        }
+    }
+    let d = d.trim_end().to_owned();
+    if d.is_empty() {
+        return;
+    }
+    match hatch.map(|h| h.kind) {
+        Some(HatchKind::Solid) => {
+            let h = hatch.expect("checked");
+            writeln!(
+                body,
+                "<path d=\"{d}\" fill=\"{}\" fill-rule=\"evenodd\" stroke=\"none\"/>",
+                h.colour.as_deref().unwrap_or("#333333")
+            )
+            .unwrap();
+        }
+        Some(HatchKind::Lines) => {
+            let h = hatch.expect("checked");
+            *clip += 1;
+            writeln!(
+                defs,
+                "<clipPath id=\"c{clip}\"><path d=\"{d}\" clip-rule=\"evenodd\"/></clipPath>"
+            )
+            .unwrap();
+            let hk = if h.scale_mode == Some(ScaleMode::Model) {
+                1.0
+            } else {
+                scale
+            };
+            let colour = h.colour.as_deref().unwrap_or("#222222");
+            let mut lines = String::new();
+            let (half, centre) = region_bounds(shape);
+            let r = half + 1e-3;
+            for f in h.lines.iter().flatten() {
+                let a = f.angle.to_radians();
+                let (dx, dy) = (a.cos(), a.sin());
+                let (nx, ny) = (-dy, dx);
+                let o = f.origin.unwrap_or([0.0, 0.0]);
+                let (ox, oy) = (o[0] * hk, o[1] * hk);
+                let (along, across) = (f.offset[0] * hk, f.offset[1] * hk);
+                if across.abs() < 1e-12 {
+                    return;
+                }
+                let (cx, cy) = (centre[0], centre[1]);
+                let c_n = (cx - ox) * nx + (cy - oy) * ny;
+                let (mut i0, mut i1) = (
+                    ((c_n - r) / across).floor() as i64,
+                    ((c_n + r) / across).ceil() as i64,
+                );
+                if i0 > i1 {
+                    std::mem::swap(&mut i0, &mut i1);
+                }
+                if i1 - i0 > 5000 {
+                    return; // a hatch far too dense for the region: skip rather than flood
+                }
+                let dashes: Vec<f64> = f.dashes.iter().flatten().map(|x| x * hk).collect();
+                let period: f64 = dashes.iter().map(|x| x.abs()).sum();
+                let da = dash_array(&dashes);
+                for i in i0..=i1 {
+                    let (bx, by) = (
+                        ox + i as f64 * (along * dx + across * nx),
+                        oy + i as f64 * (along * dy + across * ny),
+                    );
+                    let tc = (cx - bx) * dx + (cy - by) * dy;
+                    let mut t0 = tc - r;
+                    if period > 0.0 {
+                        t0 = (t0 / period).floor() * period; // dashes start at the line's base point
+                    }
+                    let t1 = tc + r;
+                    write!(
+                        lines,
+                        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"",
+                        n(bx + t0 * dx),
+                        n(-(by + t0 * dy)),
+                        n(bx + t1 * dx),
+                        n(-(by + t1 * dy))
+                    )
+                    .unwrap();
+                    if !da.is_empty() && period > 0.0 {
+                        let d: Vec<String> = da.iter().map(|x| n(*x)).collect();
+                        write!(lines, " stroke-dasharray=\"{}\"", d.join(" ")).unwrap();
+                    }
+                    lines.push_str("/>");
+                }
+            }
+            writeln!(
+                body,
+                "<g clip-path=\"url(#c{clip})\" stroke=\"{colour}\" stroke-width=\"{}\" stroke-linecap=\"round\">{lines}</g>",
+                n(0.13 * k)
+            )
+            .unwrap();
+        }
+        _ => {}
+    }
+    writeln!(
+        body,
+        "<path d=\"{d}\" fill-rule=\"evenodd\" {}/>",
+        stroke(p, scale)
+    )
+    .unwrap();
 }
 
 /// The 2D items of a representation as SVG: clip and pattern definitions, the drawing, and its
@@ -306,7 +586,6 @@ fn draw_2d(
     scale: f64,
     elevation: bool,
 ) -> Result<(String, String, Bounds), Error> {
-    let k = scale / 1000.0;
     let mut bounds = Bounds::new();
     let mut defs = String::new();
     let mut body = String::new();
@@ -323,19 +602,6 @@ fn draw_2d(
         for g in &geoms {
             match &g.shape {
                 Shape::Region { shape, .. } => {
-                    let mut d = String::new();
-                    for poly in shape {
-                        for ring in std::iter::once(poly.exterior()).chain(poly.interiors()) {
-                            let pts: Vec<[f64; 2]> = ring.coords().map(|c| [c.x, c.y]).collect();
-                            pts.iter().for_each(|q| bounds.add([q[0], q[1]]));
-                            d.push_str(&ring_path(pts.into_iter(), -1.0));
-                            d.push(' ');
-                        }
-                    }
-                    let d = d.trim_end().to_owned();
-                    if d.is_empty() {
-                        continue;
-                    }
                     let hatch = item
                         .hatch
                         .as_deref()
@@ -354,107 +620,34 @@ fn draw_2d(
                                 .find(|(key, _)| *key == h)
                                 .map(|(_, hd)| hd.clone())
                         });
-                    match hatch.as_ref().map(|h| h.kind) {
-                        Some(HatchKind::Solid) => {
-                            let h = hatch.as_ref().expect("checked");
-                            writeln!(body, "<path d=\"{d}\" fill=\"{}\" fill-rule=\"evenodd\" stroke=\"none\"/>", h.colour.as_deref().unwrap_or("#333333")).unwrap();
-                        }
-                        Some(HatchKind::Lines) => {
-                            let h = hatch.as_ref().expect("checked");
-                            clip += 1;
-                            writeln!(defs, "<clipPath id=\"c{clip}\"><path d=\"{d}\" clip-rule=\"evenodd\"/></clipPath>").unwrap();
-                            let hk = if h.scale_mode == Some(ScaleMode::Model) {
-                                1.0
-                            } else {
-                                scale
-                            };
-                            let colour = h.colour.as_deref().unwrap_or("#222222");
-                            let mut lines = String::new();
-                            let (half, centre) = region_bounds(shape);
-                            let r = half + 1e-3;
-                            for f in h.lines.iter().flatten() {
-                                let a = f.angle.to_radians();
-                                let (dx, dy) = (a.cos(), a.sin());
-                                let (nx, ny) = (-dy, dx);
-                                let o = f.origin.unwrap_or([0.0, 0.0]);
-                                let (ox, oy) = (o[0] * hk, o[1] * hk);
-                                let (along, across) = (f.offset[0] * hk, f.offset[1] * hk);
-                                if across.abs() < 1e-12 {
-                                    continue;
-                                }
-                                let (cx, cy) = (centre[0], centre[1]);
-                                let c_n = (cx - ox) * nx + (cy - oy) * ny;
-                                let (mut i0, mut i1) = (
-                                    ((c_n - r) / across).floor() as i64,
-                                    ((c_n + r) / across).ceil() as i64,
-                                );
-                                if i0 > i1 {
-                                    std::mem::swap(&mut i0, &mut i1);
-                                }
-                                if i1 - i0 > 5000 {
-                                    continue; // a hatch far too dense for the region: skip rather than flood
-                                }
-                                let dashes: Vec<f64> =
-                                    f.dashes.iter().flatten().map(|x| x * hk).collect();
-                                let period: f64 = dashes.iter().map(|x| x.abs()).sum();
-                                let da = dash_array(&dashes);
-                                for i in i0..=i1 {
-                                    let (bx, by) = (
-                                        ox + i as f64 * (along * dx + across * nx),
-                                        oy + i as f64 * (along * dy + across * ny),
-                                    );
-                                    let tc = (cx - bx) * dx + (cy - by) * dy;
-                                    let mut t0 = tc - r;
-                                    if period > 0.0 {
-                                        t0 = (t0 / period).floor() * period; // dashes start at the line's base point
-                                    }
-                                    let t1 = tc + r;
-                                    write!(
-                                        lines,
-                                        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"",
-                                        n(bx + t0 * dx),
-                                        n(-(by + t0 * dy)),
-                                        n(bx + t1 * dx),
-                                        n(-(by + t1 * dy))
-                                    )
-                                    .unwrap();
-                                    if !da.is_empty() && period > 0.0 {
-                                        let d: Vec<String> = da.iter().map(|x| n(*x)).collect();
-                                        write!(lines, " stroke-dasharray=\"{}\"", d.join(" "))
-                                            .unwrap();
-                                    }
-                                    lines.push_str("/>");
-                                }
-                            }
-                            writeln!(
-                                body,
-                                "<g clip-path=\"url(#c{clip})\" stroke=\"{colour}\" stroke-width=\"{}\" stroke-linecap=\"round\">{lines}</g>",
-                                n(0.13 * k)
-                            )
-                            .unwrap();
-                        }
-                        _ => {}
-                    }
-                    writeln!(
-                        body,
-                        "<path d=\"{d}\" fill-rule=\"evenodd\" {}/>",
-                        stroke(&p, scale)
-                    )
-                    .unwrap();
+                    region_svg(
+                        shape,
+                        hatch.as_ref(),
+                        &p,
+                        scale,
+                        &mut defs,
+                        &mut body,
+                        &mut clip,
+                        &mut bounds,
+                    );
                 }
                 Shape::Curve { points, .. } => {
                     points.iter().for_each(|q| bounds.add(*q));
-                    let pts: Vec<String> = points
-                        .iter()
-                        .map(|q| format!("{},{}", n(q[0]), n(-q[1])))
-                        .collect();
-                    writeln!(
-                        body,
-                        "<polyline points=\"{}\" {}/>",
-                        pts.join(" "),
-                        stroke(&p, scale)
-                    )
-                    .unwrap();
+                    if p.dash.is_empty() {
+                        let pts: Vec<String> = points
+                            .iter()
+                            .map(|q| format!("{},{}", n(q[0]), n(-q[1])))
+                            .collect();
+                        writeln!(
+                            body,
+                            "<polyline points=\"{}\" {}/>",
+                            pts.join(" "),
+                            stroke(&p, scale)
+                        )
+                        .unwrap();
+                    } else {
+                        dashed_polyline(points, &p, scale, &mut body);
+                    }
                 }
                 Shape::Text {
                     at, value, height, ..
