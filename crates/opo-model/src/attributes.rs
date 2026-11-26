@@ -860,6 +860,160 @@ pub struct RepresentationItem {
     /// Part name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<String>,
+    /// Part category; drawing levels of detail follow it (proposal 0005).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<PartCategory>,
+}
+
+/// Part categories (proposal 0005, decision 0027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[allow(missing_docs)]
+pub enum PartCategory {
+    Structure,
+    Insulation,
+    Finish,
+    Membrane,
+    Frame,
+    Leaf,
+    Glass,
+    Panel,
+    Trim,
+    Sill,
+    Lintel,
+    Hardware,
+    Tread,
+    Railing,
+    Other,
+}
+
+/// How a part category is drawn in a view (proposal 0005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    /// Drawn from the 3D.
+    Show,
+    /// Left out.
+    Hide,
+    /// Left out of the 3D-derived drawing; the object's overlay for the category is drawn.
+    Symbol,
+}
+
+/// Views a level-of-detail table covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawingView {
+    /// Plans (and reflected ceiling plans).
+    Plan,
+    /// Sections and elevations.
+    SectionElevation,
+}
+
+impl DrawingView {
+    /// The drawing view of a representation context; 3D and axis views have none.
+    pub fn of(context: Context) -> Option<DrawingView> {
+        match context {
+            Context::Plan | Context::Rcp => Some(DrawingView::Plan),
+            Context::Section | Context::Elevation => Some(DrawingView::SectionElevation),
+            Context::Model | Context::Axis => None,
+        }
+    }
+}
+
+/// The level-of-detail table: which part categories each drawing view shows at each level
+/// (proposal 0005). [`LodTable::default`] is the spec's default table; a project may change
+/// cells with [`LodTable::set`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct LodTable {
+    cells: std::collections::BTreeMap<(PartCategory, u8, u8), Visibility>,
+    overridden: std::collections::BTreeSet<(PartCategory, u8, u8)>,
+}
+
+fn view_key(v: DrawingView) -> u8 {
+    match v {
+        DrawingView::Plan => 0,
+        DrawingView::SectionElevation => 1,
+    }
+}
+
+fn lod_key(l: Lod) -> u8 {
+    match l {
+        Lod::Low => 0,
+        Lod::Medium => 1,
+        Lod::High | Lod::All => 2,
+    }
+}
+
+impl Default for LodTable {
+    fn default() -> Self {
+        use PartCategory as C;
+        use Visibility::{Hide as H, Show as S, Symbol as Y};
+        // Plan low, medium, high; section and elevation low, medium, high.
+        let rows: [(C, [Visibility; 6]); 15] = [
+            (C::Structure, [S, S, S, S, S, S]),
+            (C::Insulation, [H, S, S, H, S, S]),
+            (C::Finish, [H, S, S, H, S, S]),
+            (C::Membrane, [H, H, S, H, H, S]),
+            (C::Frame, [S, S, S, S, S, S]),
+            (C::Leaf, [Y, Y, Y, H, S, S]),
+            (C::Glass, [S, S, S, S, S, S]),
+            (C::Panel, [S, S, S, S, S, S]),
+            (C::Trim, [H, H, S, H, S, S]),
+            (C::Sill, [S, S, S, S, S, S]),
+            (C::Lintel, [H, H, H, H, S, S]),
+            (C::Hardware, [H, H, H, H, H, S]),
+            (C::Tread, [S, S, S, S, S, S]),
+            (C::Railing, [S, S, S, S, S, S]),
+            (C::Other, [S, S, S, S, S, S]),
+        ];
+        let mut cells = std::collections::BTreeMap::new();
+        for (c, vs) in rows {
+            for (i, v) in vs.into_iter().enumerate() {
+                cells.insert((c, (i / 3) as u8, (i % 3) as u8), v);
+            }
+        }
+        LodTable {
+            cells,
+            overridden: std::collections::BTreeSet::new(),
+        }
+    }
+}
+
+impl LodTable {
+    /// How `category` is drawn in `view` at `lod`.
+    pub fn get(&self, category: PartCategory, view: DrawingView, lod: Lod) -> Visibility {
+        self.cells
+            .get(&(category, view_key(view), lod_key(lod)))
+            .copied()
+            .unwrap_or(Visibility::Show)
+    }
+
+    /// Change one cell (a project override).
+    pub fn set(&mut self, category: PartCategory, view: DrawingView, lod: Lod, v: Visibility) {
+        let k = (category, view_key(view), lod_key(lod));
+        self.cells.insert(k, v);
+        self.overridden.insert(k);
+    }
+
+    /// How a part is drawn, given the object's own exceptions: a project override wins, then
+    /// the object's exception, then the default cell. A part without a category is shown.
+    pub fn resolve(
+        &self,
+        category: Option<PartCategory>,
+        view: DrawingView,
+        lod: Lod,
+        exceptions: Option<&std::collections::BTreeMap<PartCategory, Visibility>>,
+    ) -> Visibility {
+        let Some(c) = category else {
+            return Visibility::Show;
+        };
+        let k = (c, view_key(view), lod_key(lod));
+        if !self.overridden.contains(&k)
+            && let Some(v) = exceptions.and_then(|e| e.get(&c))
+        {
+            return *v;
+        }
+        self.get(c, view, lod)
+    }
 }
 
 /// How a derived representation is made.
@@ -870,9 +1024,13 @@ pub struct Derive {
     pub from: String,
     /// Method.
     pub method: DeriveMethod,
-    /// Parts to leave out.
+    /// Parts to leave out (deprecated by proposal 0005: use part categories).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude_parts: Option<Vec<String>>,
+    /// This object's exceptions to the level-of-detail table, by category (proposal 0005).
+    /// A project override wins over them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lod_exceptions: Option<std::collections::BTreeMap<PartCategory, Visibility>>,
 }
 
 /// Derivation methods.
@@ -1218,5 +1376,47 @@ mod provenance_tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod lod_table_tests {
+    use super::*;
+
+    #[test]
+    fn the_default_table_follows_proposal_0005() {
+        let t = LodTable::default();
+        let (p, s) = (DrawingView::Plan, DrawingView::SectionElevation);
+        assert_eq!(t.get(PartCategory::Leaf, p, Lod::Low), Visibility::Symbol);
+        assert_eq!(t.get(PartCategory::Leaf, s, Lod::Low), Visibility::Hide);
+        assert_eq!(t.get(PartCategory::Leaf, s, Lod::Medium), Visibility::Show);
+        assert_eq!(t.get(PartCategory::Lintel, p, Lod::High), Visibility::Hide);
+        assert_eq!(t.get(PartCategory::Trim, p, Lod::Medium), Visibility::Hide);
+        assert_eq!(t.get(PartCategory::Trim, p, Lod::High), Visibility::Show);
+        assert_eq!(t.get(PartCategory::Finish, p, Lod::Low), Visibility::Hide);
+        assert_eq!(
+            t.get(PartCategory::Hardware, s, Lod::High),
+            Visibility::Show
+        );
+    }
+
+    #[test]
+    fn a_project_override_wins_over_an_object_exception() {
+        let mut t = LodTable::default();
+        let exc: std::collections::BTreeMap<_, _> =
+            [(PartCategory::Lintel, Visibility::Show)].into();
+        let v = DrawingView::Plan;
+        assert_eq!(
+            t.resolve(Some(PartCategory::Lintel), v, Lod::High, Some(&exc)),
+            Visibility::Show,
+            "the object's exception applies"
+        );
+        t.set(PartCategory::Lintel, v, Lod::High, Visibility::Hide);
+        assert_eq!(
+            t.resolve(Some(PartCategory::Lintel), v, Lod::High, Some(&exc)),
+            Visibility::Hide,
+            "the project's override wins"
+        );
+        assert_eq!(t.resolve(None, v, Lod::Low, None), Visibility::Show);
     }
 }
