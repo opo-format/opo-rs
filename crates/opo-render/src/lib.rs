@@ -923,6 +923,34 @@ fn view_triangles(
     right: V3,
     up: V3,
 ) -> Result<(Vec<Tri>, Bounds), Error> {
+    let mut parts = Vec::new();
+    for item in items_of(rep) {
+        // A void cuts the host; it is not drawn.
+        if item.role.as_deref() == Some("void") {
+            continue;
+        }
+        for g in ev
+            .items(&item.geometry)
+            .map_err(|e| Error::Recipe(e.to_string()))?
+        {
+            let Some(s) = g.solid() else { continue };
+            parts.push((
+                s.clone(),
+                solid_colour(def, item, ev, &g),
+                solid_is_glass(def, item, ev, &g),
+            ));
+        }
+    }
+    Ok(triangles(&parts, eye, right, up))
+}
+
+/// Every visible triangle of a list of solids (with colour and glass flag) seen along `-eye`.
+fn triangles(
+    parts: &[(opo_recipe::Solid, String, bool)],
+    eye: V3,
+    right: V3,
+    up: V3,
+) -> (Vec<Tri>, Bounds) {
     let light = {
         let l: V3 = [
             eye[0] + 0.4 * up[0] - 0.5 * right[0],
@@ -935,50 +963,211 @@ fn view_triangles(
     let dot = |a: V3, b: V3| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let mut tris: Vec<Tri> = Vec::new();
     let mut bounds = Bounds::new();
-    let mut solid_no = 0u32;
-    for item in items_of(rep) {
-        // A void cuts the host; it is not drawn.
-        if item.role.as_deref() == Some("void") {
-            continue;
-        }
-        for g in ev
-            .items(&item.geometry)
-            .map_err(|e| Error::Recipe(e.to_string()))?
-        {
-            let Some(s) = g.solid() else { continue };
-            let colour = solid_colour(def, item, ev, &g);
-            let glass = solid_is_glass(def, item, ev, &g);
-            let base = hex(&colour);
-            solid_no += 1;
-            for f in &s.faces {
-                let [a, b, c] = f.map(|i| s.points[i]);
-                let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-                let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-                let nrm = [
-                    u[1] * v[2] - u[2] * v[1],
-                    u[2] * v[0] - u[0] * v[2],
-                    u[0] * v[1] - u[1] * v[0],
-                ];
-                let len = dot(nrm, nrm).sqrt();
-                if len < 1e-15 || dot(nrm, eye) <= 0.0 {
-                    continue; // degenerate or facing away
-                }
-                let nrm = [nrm[0] / len, nrm[1] / len, nrm[2] / len];
-                let shade = 0.55 + 0.45 * dot(nrm, light).max(0.0);
-                let rgb = [0, 1, 2].map(|i| (base[i] * shade).round().clamp(0.0, 255.0) as u8);
-                let proj = [a, b, c].map(|p| [dot(p, right), dot(p, up)]);
-                proj.iter().for_each(|q| bounds.add(*q));
-                tris.push(Tri {
-                    screen: proj,
-                    depth: [a, b, c].map(|p| dot(p, eye)),
-                    rgb,
-                    solid: solid_no,
-                    alpha: if glass { GLASS_ALPHA } else { 1.0 },
-                });
+    for (solid_no, (s, colour, glass)) in parts.iter().enumerate() {
+        let base = hex(colour);
+        for f in &s.faces {
+            let [a, b, c] = f.map(|i| s.points[i]);
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let nrm = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let len = dot(nrm, nrm).sqrt();
+            if len < 1e-15 || dot(nrm, eye) <= 0.0 {
+                continue; // degenerate or facing away
             }
+            let nrm = [nrm[0] / len, nrm[1] / len, nrm[2] / len];
+            let shade = 0.55 + 0.45 * dot(nrm, light).max(0.0);
+            let rgb = [0, 1, 2].map(|i| (base[i] * shade).round().clamp(0.0, 255.0) as u8);
+            let proj = [a, b, c].map(|p| [dot(p, right), dot(p, up)]);
+            proj.iter().for_each(|q| bounds.add(*q));
+            tris.push(Tri {
+                screen: proj,
+                depth: [a, b, c].map(|p| dot(p, eye)),
+                rgb,
+                solid: solid_no as u32 + 1,
+                alpha: if *glass { GLASS_ALPHA } else { 1.0 },
+            });
         }
     }
-    Ok((tris, bounds))
+    (tris, bounds)
+}
+
+/// Views of a host with one hosted object (see [`hosted_view_svg`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostedView {
+    /// The shaded 3D view.
+    Model,
+    /// Square on to the host's outside face (decision 0024).
+    Elevation,
+    /// A vertical cut across the host through the hosted object's centre, seen along +x.
+    Section,
+}
+
+/// A host with one hosted object at `x` (proposal 0004) in 3D, in elevation from the host's
+/// outside face (decision 0024), or in section across the host through the object. The
+/// hosted object's level of detail is that of `hosted_model`; elevation and section follow
+/// the level-of-detail table; reveals are shown at high detail; cut regions are filled solid
+/// at low detail (mass construction) and hatched otherwise.
+#[allow(clippy::too_many_arguments)]
+pub fn hosted_view_svg(
+    host_def: &TypeDefinition,
+    host_ev: &Evaluation,
+    layer_step: &str,
+    hosted_def: &TypeDefinition,
+    hosted_ev: &Evaluation,
+    hosted_model: &str,
+    x: f64,
+    view: HostedView,
+    scale: f64,
+) -> Result<String, Error> {
+    use opo_model::Lod;
+    let lod = representation(hosted_def, hosted_model)?.lod;
+    let table = opo_model::LodTable::default();
+    let drawing = match view {
+        HostedView::Model => None,
+        _ => Some((opo_model::DrawingView::SectionElevation, &table)),
+    };
+    let parts = opo_recipe::host::hosted_model(
+        host_def,
+        host_ev,
+        layer_step,
+        hosted_def,
+        hosted_ev,
+        hosted_model,
+        x,
+        matches!(lod, Lod::High | Lod::All),
+        drawing,
+    )
+    .map_err(|e| Error::Recipe(e.to_string()))?;
+    let def_of = |p: &opo_recipe::host::ModelPart| if p.from_host { host_def } else { hosted_def };
+    let colour = |p: &opo_recipe::host::ModelPart| {
+        p.material
+            .as_ref()
+            .and_then(|m| {
+                def_of(p)
+                    .materials
+                    .iter()
+                    .flatten()
+                    .find(|(k, _)| *k == *m)
+                    .and_then(|(_, mat)| mat.colour.clone())
+            })
+            .unwrap_or_else(|| "#bbbbbb".into())
+    };
+    let glass = |p: &opo_recipe::host::ModelPart| {
+        p.material.as_ref().is_some_and(|m| {
+            def_of(p).materials.iter().flatten().any(|(k, mat)| {
+                k == m && matches!(mat.category, opo_model::MaterialCategory::Glass)
+            })
+        })
+    };
+    match view {
+        HostedView::Model | HostedView::Elevation => {
+            let list: Vec<_> = parts
+                .iter()
+                .map(|p| (p.solid.clone(), colour(p), glass(p)))
+                .collect();
+            let (eye, right, up) = if view == HostedView::Model {
+                let (elev, azim) = (24f64.to_radians(), (-58f64).to_radians());
+                (
+                    [elev.cos() * azim.cos(), elev.cos() * azim.sin(), elev.sin()],
+                    [-azim.sin(), azim.cos(), 0.0],
+                    [
+                        -elev.sin() * azim.cos(),
+                        -elev.sin() * azim.sin(),
+                        elev.cos(),
+                    ],
+                )
+            } else {
+                let host = opo_recipe::host::provides(host_def, host_ev)
+                    .map_err(|e| Error::Recipe(e.to_string()))?;
+                if host.get("exterior").and_then(|v| v.as_str()) == Some("back") {
+                    ([0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+                } else {
+                    ([0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+                }
+            };
+            let (tris, bounds) = triangles(&list, eye, right, up);
+            let body = if tris.is_empty() {
+                String::new()
+            } else {
+                raster_image(&tris, &bounds)
+            };
+            Ok(svg_document(bounds, &body, true))
+        }
+        HostedView::Section => {
+            let h = -x;
+            let turned: Vec<_> = parts
+                .iter()
+                .map(|p| (opo_recipe::host::for_x_section(&p.solid), p))
+                .collect();
+            let (mut defs, mut body, mut bounds) = (String::new(), String::new(), Bounds::new());
+            let refs: Vec<&opo_recipe::Solid> = turned.iter().map(|(s, _)| s).collect();
+            let pp = pen(Some(LineClass::Projected), None);
+            let mut path = String::new();
+            for [a, b] in opo_recipe::derive::visible_edges_below(&refs, h) {
+                bounds.add(a);
+                bounds.add(b);
+                write!(path, "M{} {}L{} {}", n(a[0]), n(-a[1]), n(b[0]), n(-b[1])).unwrap();
+            }
+            if !path.is_empty() {
+                writeln!(body, "<path d=\"{path}\" {}/>", stroke(&pp, scale)).unwrap();
+            }
+            let p = pen(Some(LineClass::Cut), None);
+            let mut clip = 9000usize;
+            let poche = lod == Lod::Low;
+            // At low detail the host's layers are one region with its core's material.
+            let mut cuts: Vec<(opo_recipe::MultiPolygon<f64>, &opo_recipe::host::ModelPart)> =
+                Vec::new();
+            let mut host_cut = opo_recipe::MultiPolygon::<f64>(Vec::new());
+            let mut core: Option<&opo_recipe::host::ModelPart> = None;
+            for (s, part) in &turned {
+                let shape = opo_recipe::derive::section(s, h);
+                if shape.0.is_empty() {
+                    continue;
+                }
+                if poche && part.from_host {
+                    use opo_recipe::BooleanOps;
+                    host_cut = host_cut.union(&shape);
+                    if core.is_none() || material_look(host_def, part.material.as_deref()).1 {
+                        core = Some(part);
+                    }
+                } else {
+                    cuts.push((shape, part));
+                }
+            }
+            if let Some(c) = core {
+                cuts.insert(0, (host_cut, c));
+            }
+            for (shape, part) in &cuts {
+                let shape = shape.clone();
+                let (hatch, mass) = material_look(def_of(part), part.material.as_deref());
+                region_fill(
+                    &shape,
+                    &mut body,
+                    if poche && mass { POCHE } else { "#ffffff" },
+                );
+                region_svg(
+                    &shape,
+                    if poche { None } else { hatch.as_ref() },
+                    &p,
+                    scale,
+                    &mut defs,
+                    &mut body,
+                    &mut clip,
+                    &mut bounds,
+                );
+            }
+            let mut all = String::new();
+            if !defs.is_empty() {
+                writeln!(all, "<defs>\n{defs}</defs>").unwrap();
+            }
+            all.push_str(&body);
+            Ok(svg_document(bounds, &all, true))
+        }
+    }
 }
 
 /// Opacity of glass in the 3D views.
