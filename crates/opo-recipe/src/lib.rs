@@ -13,6 +13,7 @@
 pub mod derive;
 mod geometry;
 mod grid;
+pub mod host;
 mod mesh;
 mod ops;
 mod run;

@@ -372,6 +372,125 @@ pub fn plan_svg(
     Ok(svg_document(bounds, &all, true))
 }
 
+/// A host's plan with one hosted object in it (proposal 0004): the host's layers cut at the
+/// view's cut height with the object's void cut out, and the object's own plan placed at `x`
+/// along the host on its seat. At low detail the host is one region filled solid (if its core
+/// is mass construction); at medium its layers are hatched and stop square at the void; at
+/// high the object's reveal rules are applied too.
+#[allow(clippy::too_many_arguments)]
+pub fn hosted_plan_svg(
+    host_def: &TypeDefinition,
+    host_ev: &Evaluation,
+    layer_step: &str,
+    hosted_def: &TypeDefinition,
+    hosted_ev: &Evaluation,
+    hosted_representation: &str,
+    x: f64,
+    scale: f64,
+) -> Result<String, Error> {
+    use opo_model::Lod;
+    let rep = representation(hosted_def, hosted_representation)?;
+    let lod = rep.lod;
+    let host =
+        opo_recipe::host::provides(host_def, host_ev).map_err(|e| Error::Recipe(e.to_string()))?;
+    let seat = opo_recipe::host::seat_y(hosted_def, hosted_ev, &host);
+    let regions = opo_recipe::host::cut_host_plan(
+        host_def,
+        host_ev,
+        layer_step,
+        hosted_def,
+        hosted_ev,
+        x,
+        lod == Lod::High || lod == Lod::All,
+        lod == Lod::Low,
+    )
+    .map_err(|e| Error::Recipe(e.to_string()))?;
+    let (mut defs, mut body, mut bounds) = (String::new(), String::new(), Bounds::new());
+    let p = pen(Some(LineClass::Cut), None);
+    let mut clip = 5000usize;
+    for r in &regions {
+        let (hatch, mass) = material_look(host_def, r.material.as_deref());
+        let poche = lod == Lod::Low;
+        region_fill(
+            &r.shape,
+            &mut body,
+            if poche && mass { POCHE } else { "#ffffff" },
+        );
+        region_svg(
+            &r.shape,
+            if poche { None } else { hatch.as_ref() },
+            &p,
+            scale,
+            &mut defs,
+            &mut body,
+            &mut clip,
+            &mut bounds,
+        );
+    }
+    // The hosted object's own plan, moved onto its seat.
+    let (mut d2, mut b2, mut bb) = (String::new(), String::new(), Bounds::new());
+    if let Some(d) = &rep.derive {
+        derived_plan(
+            hosted_def,
+            hosted_ev,
+            d,
+            lod == Lod::Low,
+            scale,
+            &mut d2,
+            &mut b2,
+            &mut bb,
+        )?;
+    }
+    let (d3, b3, b3b) = draw_2d(hosted_def, hosted_ev, rep, scale, false)?;
+    d2.push_str(&d3);
+    b2.push_str(&b3);
+    for q in [b3b.min, b3b.max] {
+        if b3b.min[0] <= b3b.max[0] {
+            bb.add(q);
+        }
+    }
+    if bb.min[0] <= bb.max[0] {
+        bounds.add([bb.min[0] + x, bb.min[1] + seat]);
+        bounds.add([bb.max[0] + x, bb.max[1] + seat]);
+    }
+    defs.push_str(&d2);
+    writeln!(
+        body,
+        "<g transform=\"translate({} {})\">\n{b2}</g>",
+        n(x),
+        n(-seat)
+    )
+    .unwrap();
+    let mut all = String::new();
+    if !defs.is_empty() {
+        writeln!(all, "<defs>\n{defs}</defs>").unwrap();
+    }
+    all.push_str(&body);
+    Ok(svg_document(bounds, &all, true))
+}
+
+/// A material's cut hatch, and whether it is mass construction (concrete, masonry, earth),
+/// which is filled solid at low detail.
+fn material_look(def: &TypeDefinition, key: Option<&str>) -> (Option<opo_model::Hatch>, bool) {
+    use opo_model::MaterialCategory as C;
+    let Some(m) = key else { return (None, false) };
+    let mat = def
+        .materials
+        .iter()
+        .flatten()
+        .find(|(k, _)| k.as_str() == m)
+        .map(|(_, v)| v);
+    let mass = mat.is_some_and(|v| matches!(v.category, C::Concrete | C::Masonry | C::Earth));
+    let hatch = mat.and_then(|v| {
+        def.hatches
+            .iter()
+            .flatten()
+            .find(|(k, _)| **k == v.cut.hatch)
+            .map(|(_, hd)| hd.clone())
+    });
+    (hatch, mass)
+}
+
 /// A plan derived from a 3D representation (spec §4.6): the cut through its solids at the
 /// view's cut height, hatched by material, and the edges below the cut seen from above.
 #[allow(clippy::too_many_arguments)]
