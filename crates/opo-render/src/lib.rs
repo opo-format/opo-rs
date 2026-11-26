@@ -104,6 +104,61 @@ fn pen(class: Option<LineClass>, role: Option<&str>) -> Pen {
     p
 }
 
+/// A dashed polyline split at its corners (turns over 30°), each piece with the dash pattern
+/// stretched so it starts and ends with a dash: dashed lines meet at their corners.
+fn dashed_polyline(points: &[[f64; 2]], p: &Pen, scale: f64, body: &mut String) {
+    let k = scale / 1000.0;
+    let mut pieces: Vec<Vec<[f64; 2]>> = vec![vec![]];
+    for (i, q) in points.iter().enumerate() {
+        pieces.last_mut().expect("one").push(*q);
+        if i > 0 && i + 1 < points.len() {
+            let (a, b, c) = (points[i - 1], *q, points[i + 1]);
+            let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            let (lu, lv) = (u[0].hypot(u[1]), v[0].hypot(v[1]));
+            if lu > 1e-12
+                && lv > 1e-12
+                && (u[0] * v[0] + u[1] * v[1]) / (lu * lv) < 30f64.to_radians().cos()
+            {
+                pieces.push(vec![*q]);
+            }
+        }
+    }
+    let solid = Pen {
+        width: p.width,
+        dash: &[],
+        colour: p.colour,
+    };
+    for piece in pieces.iter().filter(|x| x.len() > 1) {
+        let len: f64 = piece
+            .windows(2)
+            .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+            .sum();
+        let pat: Vec<f64> = p.dash.iter().map(|x| x * k).collect();
+        let period: f64 = pat.iter().sum();
+        let first = pat[0];
+        // Whole periods plus a closing dash fill the piece exactly.
+        let reps = ((len - first) / period).round().max(0.0);
+        let f = if reps < 1.0 {
+            1.0
+        } else {
+            len / (reps * period + first)
+        };
+        let d: Vec<String> = pat.iter().map(|x| n(x * f)).collect();
+        let pts: Vec<String> = piece
+            .iter()
+            .map(|q| format!("{},{}", n(q[0]), n(-q[1])))
+            .collect();
+        writeln!(
+            body,
+            "<polyline points=\"{}\" {} stroke-dasharray=\"{}\"/>",
+            pts.join(" "),
+            stroke(&solid, scale),
+            d.join(" ")
+        )
+        .unwrap();
+    }
+}
+
 fn stroke(p: &Pen, scale: f64) -> String {
     let k = scale / 1000.0;
     let mut s = format!(
@@ -578,17 +633,21 @@ fn draw_2d(
                 }
                 Shape::Curve { points, .. } => {
                     points.iter().for_each(|q| bounds.add(*q));
-                    let pts: Vec<String> = points
-                        .iter()
-                        .map(|q| format!("{},{}", n(q[0]), n(-q[1])))
-                        .collect();
-                    writeln!(
-                        body,
-                        "<polyline points=\"{}\" {}/>",
-                        pts.join(" "),
-                        stroke(&p, scale)
-                    )
-                    .unwrap();
+                    if p.dash.is_empty() {
+                        let pts: Vec<String> = points
+                            .iter()
+                            .map(|q| format!("{},{}", n(q[0]), n(-q[1])))
+                            .collect();
+                        writeln!(
+                            body,
+                            "<polyline points=\"{}\" {}/>",
+                            pts.join(" "),
+                            stroke(&p, scale)
+                        )
+                        .unwrap();
+                    } else {
+                        dashed_polyline(points, &p, scale, &mut body);
+                    }
                 }
                 Shape::Text {
                     at, value, height, ..
