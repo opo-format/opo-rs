@@ -311,8 +311,16 @@ impl Runner<'_> {
                             runner: self,
                         };
                         for mut g in flatten(&each.eval(&body, &at("do"))?)? {
-                            if g.each.is_none() && matches!(item, Value::Context(_)) {
-                                g.each = Some(item.clone());
+                            if g.each.is_none() {
+                                // The item, or the item an item that is geometry kept (a layer
+                                // band made by an earlier `for_each`).
+                                g.each = match &item {
+                                    Value::Context(_) => Some(item.clone()),
+                                    Value::Foreign(f) => {
+                                        f.downcast::<Geometry>().and_then(|x| x.each.clone())
+                                    }
+                                    _ => None,
+                                };
                             }
                             g.index = Some(i + 1);
                             out.push(g);
