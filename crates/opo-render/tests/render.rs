@@ -336,14 +336,14 @@ fn a_hosted_door_cuts_its_wall() {
     };
     let dev = run(&door, &din, &resolver).unwrap();
     let regions =
-        opo_recipe::host::cut_host_plan(&wall, &wev, "layer_solids", &door, &dev, 0.0, true, false)
+        opo_recipe::host::cut_host_plan(&wall, &wev, "layer_solids", &door, &dev, 0.0, false)
             .unwrap();
     assert!(
         regions.iter().all(|r| r.shape.0.len() == 2),
         "each layer is split in two by the opening"
     );
     let merged =
-        opo_recipe::host::cut_host_plan(&wall, &wev, "layer_solids", &door, &dev, 0.0, false, true)
+        opo_recipe::host::cut_host_plan(&wall, &wev, "layer_solids", &door, &dev, 0.0, true)
             .unwrap();
     assert_eq!(merged.len(), 1, "at low detail the wall is one region");
     let svg = hosted_plan_svg(
@@ -395,7 +395,10 @@ fn a_hosted_door_shows_in_elevation_section_and_3d() {
     )
     .unwrap();
     let host_parts = parts.iter().filter(|p| p.from_host).count();
-    assert_eq!(host_parts, 3, "one seamless solid per wall layer");
+    assert_eq!(
+        host_parts, 1,
+        "the wall is one closed solid (decision 0028)"
+    );
     assert!(parts.iter().any(|p| !p.from_host), "the door's solids");
     for v in [
         opo_render::HostedView::Model,

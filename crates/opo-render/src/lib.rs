@@ -375,8 +375,8 @@ pub fn plan_svg(
 /// A host's plan with one hosted object in it (proposal 0004): the host's layers cut at the
 /// view's cut height with the object's void cut out, and the object's own plan placed at `x`
 /// along the host on its seat. At low detail the host is one region filled solid (if its core
-/// is mass construction); at medium its layers are hatched and stop square at the void; at
-/// high the object's reveal rules are applied too.
+/// is mass construction); at medium and high its layers are hatched. Openings cut the host
+/// square (decision 0028).
 #[allow(clippy::too_many_arguments)]
 pub fn hosted_plan_svg(
     host_def: &TypeDefinition,
@@ -401,7 +401,6 @@ pub fn hosted_plan_svg(
         hosted_def,
         hosted_ev,
         x,
-        lod == Lod::High || lod == Lod::All,
         lod == Lod::Low,
     )
     .map_err(|e| Error::Recipe(e.to_string()))?;
@@ -1009,7 +1008,8 @@ pub enum HostedView {
 /// A host with one hosted object at `x` (proposal 0004) in 3D, in elevation from the host's
 /// outside face (decision 0024), or in section across the host through the object. The
 /// hosted object's level of detail is that of `hosted_model`; elevation and section follow
-/// the level-of-detail table; reveals are shown at high detail; cut regions are filled solid
+/// the level-of-detail table. The host is one solid (decision 0028); a section hatches its
+/// layers where it is cut. Cut regions are filled solid
 /// at low detail (mass construction) and hatched otherwise.
 #[allow(clippy::too_many_arguments)]
 pub fn hosted_view_svg(
@@ -1038,7 +1038,7 @@ pub fn hosted_view_svg(
         hosted_ev,
         hosted_model,
         x,
-        matches!(lod, Lod::High | Lod::All),
+        view == HostedView::Section && lod != Lod::Low,
         drawing,
     )
     .map_err(|e| Error::Recipe(e.to_string()))?;
